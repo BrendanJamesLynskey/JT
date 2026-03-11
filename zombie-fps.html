@@ -302,7 +302,6 @@ function init(){
 
   // ── World renderer ──
   const canvas=document.getElementById('c');
-  canvas.width=innerWidth; canvas.height=innerHeight;
   renderer=new THREE.WebGLRenderer({canvas,antialias:true});
   renderer.setSize(innerWidth,innerHeight,false);
   renderer.shadowMap.enabled=true;
@@ -310,7 +309,6 @@ function init(){
 
   // ── Gun renderer (separate transparent canvas, always on top) ──
   const gcanvas=document.getElementById('gc');
-  gcanvas.width=innerWidth; gcanvas.height=innerHeight;
   gRenderer=new THREE.WebGLRenderer({canvas:gcanvas,antialias:true,alpha:true});
   gRenderer.setSize(innerWidth,innerHeight,false);
   gRenderer.setClearColor(0x000000,0);
@@ -342,7 +340,9 @@ function init(){
 
   waveOn=false;waveTimer=2.5;waveTot=0;waveSpawn=0;
   alive=true;paused=false;
+  _discoCached=false;
 
+  cacheHUDElements();
   setupInput();
   requestAnimationFrame(loop);
 }
@@ -643,9 +643,9 @@ function tickPickups(dt, t){
     p.position.y = .18 + Math.sin(t*2.5 + p.userData.bobBase)*.1;
     p.rotation.y = t*1.2 + p.userData.bobBase;
 
-    // Check player proximity
+    // Check player proximity (squared distance avoids sqrt)
     const dx=cam.position.x-p.position.x, dz=cam.position.z-p.position.z;
-    if(Math.sqrt(dx*dx+dz*dz) < 1.1){
+    if(dx*dx+dz*dz < 1.21){
       const type=p.userData.type;
       if(type==='health'){
         hp=Math.min(100,hp+30);
@@ -809,7 +809,7 @@ function tickWeaponPickups(dt,t){
     p.position.y=.04+Math.sin(t*2+p.userData.bobBase)*.09;
     p.rotation.y=t*.8+p.userData.bobBase;
     const dx=cam.position.x-p.position.x, dz=cam.position.z-p.position.z;
-    if(Math.sqrt(dx*dx+dz*dz)<1.2){
+    if(dx*dx+dz*dz<1.44){
       const wt=p.userData.wtype;
       weps[wt].owned=true; weps[wt].ammo=WD[wt].mag; weps[wt].res=WD[wt].res;
       scene.remove(p); weaponPickups.splice(i,1);
@@ -874,7 +874,7 @@ function makeHPBar(zom){
   const tex=new THREE.CanvasTexture(cv);
   const bar=new THREE.Mesh(new THREE.PlaneGeometry(.6,.07),new THREE.MeshBasicMaterial({map:tex,transparent:true,depthTest:false}));
   bar.position.set(0,zom.type.z*2.1+.12,0);bar.name='hb';zom.mesh.add(bar);
-  zom.cv=cv;zom.ctx=cv.getContext('2d');zom.tex=tex;
+  zom.hbar=bar;zom.cv=cv;zom.ctx=cv.getContext('2d');zom.tex=tex;
   updHPBar(zom);
 }
 function updHPBar(zom){
@@ -905,50 +905,55 @@ function shoot(){
   if(gun&&!w.flame){gun._kick=true;gun.position.z=-.42;gun.rotation.x=w.pellets?.18:.12;setTimeout(()=>{if(gun){gun._kick=false;gun.rotation.x=0;}},90);}
   if(!w.melee&&!w.flame){pitch+=.015;yaw+=(Math.random()-.5)*.006;}
 
-  // Melee (chainsaw)
+  // Melee (chainsaw) — reuse pre-allocated vectors
   if(w.melee){
-    const fwd=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-    zombies.filter(z=>z.ok).forEach(z=>{
-      const d=cam.position.distanceTo(z.mesh.position);
-      if(d<w.meleeRange){
-        const toZ=new THREE.Vector3().subVectors(z.mesh.position,cam.position).normalize();
-        if(fwd.dot(toZ)>.3){
+    _meleeDir.set(-Math.sin(yaw),0,-Math.cos(yaw));
+    const meleeR2=w.meleeRange*w.meleeRange;
+    for(let i=0;i<zombies.length;i++){
+      const z=zombies[i]; if(!z.ok) continue;
+      const dx=z.mesh.position.x-cam.position.x, dz=z.mesh.position.z-cam.position.z;
+      if(dx*dx+dz*dz<meleeR2){
+        _toZ.set(dx,0,dz).normalize();
+        if(_meleeDir.dot(_toZ)>.3){
           z.hp-=w.dmg; updHPBar(z); SFX.hit();
           spawnBlood(z.mesh.position.clone().setY(.8));
           if(z.hp<=0) killZ(z);
         }
       }
-    });
+    }
     return;
   }
 
-  // Flame (short range cone, no raycast)
+  // Flame (short range cone, no raycast) — reuse pre-allocated vectors
   if(w.flame){
-    const fwd2=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-    zombies.filter(z=>z.ok).forEach(z=>{
-      const d=cam.position.distanceTo(z.mesh.position);
-      if(d<8){
-        const toZ2=new THREE.Vector3().subVectors(z.mesh.position,cam.position).normalize();
-        if(fwd2.dot(toZ2)>.55){
+    _meleeDir.set(-Math.sin(yaw),0,-Math.cos(yaw));
+    for(let i=0;i<zombies.length;i++){
+      const z=zombies[i]; if(!z.ok) continue;
+      const dx=z.mesh.position.x-cam.position.x, dz=z.mesh.position.z-cam.position.z;
+      if(dx*dx+dz*dz<64){
+        _toZ.set(dx,0,dz).normalize();
+        if(_meleeDir.dot(_toZ)>.55){
           z.hp-=w.dmg; updHPBar(z);
           if(Math.random()<.12) SFX.hit();
           spawnBlood(z.mesh.position.clone().setY(.8));
           if(z.hp<=0) killZ(z);
         }
       }
-    });
+    }
     if(w.ammo===0&&w.res>0) setTimeout(startReload,250);
     return;
   }
 
-  // Raycast (rifle / revolver / shotgun)
+  // Raycast (rifle / revolver / shotgun) — reuse vectors, avoid filter/map
   const pelletCount=w.pellets||1;
+  const _meshes=[];for(let i=0;i<zombies.length;i++)if(zombies[i].ok)_meshes.push(zombies[i].mesh);
+  _shootEuler.set(pitch,yaw,0);
   for(let pellet=0;pellet<pelletCount;pellet++){
     const sp=w.spread;
-    const dir=new THREE.Vector3((Math.random()-.5)*sp*2,(Math.random()-.5)*sp*2,-1).normalize();
-    dir.applyEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));
-    rc.set(cam.position,dir);
-    const hits=rc.intersectObjects(zombies.filter(z=>z.ok).map(z=>z.mesh),true);
+    _shootDir.set((Math.random()-.5)*sp*2,(Math.random()-.5)*sp*2,-1).normalize();
+    _shootDir.applyEuler(_shootEuler);
+    rc.set(cam.position,_shootDir);
+    const hits=rc.intersectObjects(_meshes,true);
     if(hits.length){
       let obj=hits[0].object;while(obj.parent&&!obj.parent.isScene)obj=obj.parent;
       const zom=zombies.find(z=>z.mesh===obj);
@@ -1061,6 +1066,22 @@ function gameOver(){
   document.getElementById('gostats').innerHTML=`Zombies Slain: <strong>${kills}</strong><br>Score: <strong>${score}</strong><br>Waves: <strong>${wave-1}</strong>`;
 }
 
+// ─── PRE-ALLOCATED OBJECTS (avoid GC in hot path) ────────────────
+const _fwd=new THREE.Vector3(), _rgt=new THREE.Vector3(), _mv=new THREE.Vector3();
+const _shootDir=new THREE.Vector3(), _shootEuler=new THREE.Euler(0,0,0,'YXZ');
+const _meleeDir=new THREE.Vector3(), _toZ=new THREE.Vector3();
+// Cached DOM elements queried every frame
+let _aliveEl,_wavenumEl,_waveannEl,_cstimerEl,_fstimerEl;
+function cacheHUDElements(){
+  _aliveEl=document.getElementById('alivecount');
+  _wavenumEl=document.getElementById('wavenum');
+  _waveannEl=document.getElementById('waveann');
+  _cstimerEl=document.getElementById('chainsaw-timer');
+  _fstimerEl=document.getElementById('flamer-timer');
+}
+// Cached disco scene objects (populated on first disco frame)
+let _discoCached=false, _mball=null, _dspots=[null,null,null,null];
+
 // ─── LOOP ────────────────────────────────────────────────────────
 function loop(){
   if(!alive)return;
@@ -1071,20 +1092,20 @@ function loop(){
 
   // Move
   const sp=7.5;
-  const fwd=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-  const rgt=new THREE.Vector3( Math.cos(yaw),0,-Math.sin(yaw));
-  const mv=new THREE.Vector3();
-  if(keys['KeyW']||keys['ArrowUp'])    mv.addScaledVector(fwd,sp*dt);
-  if(keys['KeyS']||keys['ArrowDown'])  mv.addScaledVector(fwd,-sp*dt);
-  if(keys['KeyA']||keys['ArrowLeft'])  mv.addScaledVector(rgt,-sp*dt);
-  if(keys['KeyD']||keys['ArrowRight']) mv.addScaledVector(rgt,sp*dt);
-  cam.position.add(mv);
+  _fwd.set(-Math.sin(yaw),0,-Math.cos(yaw));
+  _rgt.set( Math.cos(yaw),0,-Math.sin(yaw));
+  _mv.set(0,0,0);
+  if(keys['KeyW']||keys['ArrowUp'])    _mv.addScaledVector(_fwd,sp*dt);
+  if(keys['KeyS']||keys['ArrowDown'])  _mv.addScaledVector(_fwd,-sp*dt);
+  if(keys['KeyA']||keys['ArrowLeft'])  _mv.addScaledVector(_rgt,-sp*dt);
+  if(keys['KeyD']||keys['ArrowRight']) _mv.addScaledVector(_rgt,sp*dt);
+  cam.position.add(_mv);
   cam.position.x=Math.max(-38,Math.min(38,cam.position.x));
   cam.position.z=Math.max(-38,Math.min(38,cam.position.z));
   cam.position.y=1.72;
 
   // Footsteps
-  if(mv.length()>.01){footT-=dt;if(footT<=0){SFX.reload&&noise(.07,0,.05,180,'lowpass',1);footT=.38;}}else footT=0;
+  if(_mv.length()>.01){footT-=dt;if(footT<=0){SFX.reload&&noise(.07,0,.05,180,'lowpass',1);footT=.38;}}else footT=0;
 
   // Auto-fire
   if((keys['Space']||keys['M0'])&&weps[curW]&&weps[curW].auto){
@@ -1097,7 +1118,7 @@ function loop(){
 
   // Gun bob
   if(gun&&!gun._kick){
-    const ml=mv.length();
+    const ml=_mv.length();
     gun.position.set(.28, -.26+Math.sin(t*6)*ml*.012+Math.sin(t*.8)*.003, -.55);
     gun.rotation.x = .02+pitch*.05;
     gun.rotation.z = Math.sin(t*5)*ml*.01;
@@ -1109,12 +1130,12 @@ function loop(){
   // Wave
   if(!waveOn){waveTimer-=dt;if(waveTimer<=0)startWave();}
   else{
-    const a=zombies.filter(z=>z.ok).length;
-    document.getElementById('alivecount').textContent=a;
+    let a=0; for(let i=0;i<zombies.length;i++) if(zombies[i].ok) a++;
+    _aliveEl.textContent=a;
     if(waveSpawn<waveTot&&a<18){spawnZ();waveSpawn++;}
-    if(waveSpawn>=waveTot&&a===0){waveOn=false;wave++;waveTimer=6;document.getElementById('wavenum').textContent=wave;wann(`✅ WAVE ${wave-1} CLEARED!<br><small>Next in 6s…</small>`);}
+    if(waveSpawn>=waveTot&&a===0){waveOn=false;wave++;waveTimer=6;_wavenumEl.textContent=wave;wann(`✅ WAVE ${wave-1} CLEARED!<br><small>Next in 6s…</small>`);}
   }
-  if(wAnn>0){wAnn-=dt;if(wAnn<=0)document.getElementById('waveann').style.opacity='0';}
+  if(wAnn>0){wAnn-=dt;if(wAnn<=0)_waveannEl.style.opacity='0';}
 
   // Heartbeat sound when low hp
   if(hp<=30&&alive){
@@ -1143,37 +1164,42 @@ function loop(){
         flashHit();if(hp<=0){gameOver();return;}}
     }
     if(t-z.lgr>3+Math.random()*5&&dist<22){z.lgr=t;SFX.zgrowl();}
-    if(z.tex){z.mesh.children.forEach(c=>{if(c.name==='hb')c.lookAt(pp);});}
+    if(z.hbar) z.hbar.lookAt(pp);
   });
 
-  // Blood particles
-  decals.forEach(d=>{d.life-=dt;if(d.mv&&d.vel){d.mesh.position.addScaledVector(d.vel,dt);d.vel.y-=6*dt;}if(d.life/d.max<.35)d.mesh.material.opacity=Math.max(0,d.life/d.max*3);});
-  decals=decals.filter(d=>{if(d.life<=0){scene.remove(d.mesh);return false;}return true;});
+  // Blood particles (in-place removal to avoid allocating new array)
+  for(let i=decals.length-1;i>=0;i--){
+    const d=decals[i]; d.life-=dt;
+    if(d.mv&&d.vel){d.mesh.position.addScaledVector(d.vel,dt);d.vel.y-=6*dt;}
+    if(d.life<=0){scene.remove(d.mesh);decals[i]=decals[decals.length-1];decals.pop();}
+    else if(d.life/d.max<.35) d.mesh.material.opacity=Math.max(0,d.life/d.max*3);
+  }
 
-  // Disco
-  if(envKey==='disco'){const mb=scene.getObjectByName('mball');if(mb)mb.rotation.y=t*.3;for(let i=0;i<4;i++){const s=scene.getObjectByName('ds'+i);if(s){s.target.position.set(Math.sin(t*1.8+i*1.57)*12,0,Math.cos(t*1.8+i*1.57)*12);s.target.updateMatrixWorld();}}}
+  // Disco (cached scene lookups)
+  if(envKey==='disco'){
+    if(!_discoCached){_mball=scene.getObjectByName('mball');for(let i=0;i<4;i++)_dspots[i]=scene.getObjectByName('ds'+i);_discoCached=true;}
+    if(_mball)_mball.rotation.y=t*.3;
+    for(let i=0;i<4;i++){const s=_dspots[i];if(s){s.target.position.set(Math.sin(t*1.8+i*1.57)*12,0,Math.cos(t*1.8+i*1.57)*12);s.target.updateMatrixWorld();}}
+  }
 
   tickPickups(dt,t);
   tickWeaponPickups(dt,t);
-  // Chainsaw countdown display
-  const _csel=document.getElementById('chainsaw-timer');
-  if(_csel&&_csel.style.display!=='none'){
-    const rem=Math.max(0,(+_csel.dataset.end-Date.now())/1000);
-    _csel.textContent='⛓ '+rem.toFixed(1)+'s';
-    _csel.style.color=rem<2?'#ff2200':'#ff8800';
+  // Chainsaw countdown display (using cached DOM refs)
+  if(_cstimerEl&&_cstimerEl.style.display!=='none'){
+    const rem=Math.max(0,(+_cstimerEl.dataset.end-Date.now())/1000);
+    _cstimerEl.textContent='⛓ '+rem.toFixed(1)+'s';
+    _cstimerEl.style.color=rem<2?'#ff2200':'#ff8800';
   }
-  const _fsel=document.getElementById('flamer-timer');
-  if(_fsel&&_fsel.style.display!=='none'){
-    const rem2=Math.max(0,(+_fsel.dataset.end-Date.now())/1000);
-    _fsel.textContent='🔥 '+rem2.toFixed(1)+'s';
-    _fsel.style.color=rem2<1.5?'#ff2200':'#ff4400';
+  if(_fstimerEl&&_fstimerEl.style.display!=='none'){
+    const rem2=Math.max(0,(+_fstimerEl.dataset.end-Date.now())/1000);
+    _fstimerEl.textContent='🔥 '+rem2.toFixed(1)+'s';
+    _fstimerEl.style.color=rem2<1.5?'#ff2200':'#ff4400';
   }
   renderer.render(scene,cam);
   gRenderer.render(gScene,gCam);
 }
 
-// Fallback auto-fire timer
-setInterval(()=>{if(alive&&!paused&&weps[curW]&&weps[curW].auto&&(keys['M0']||keys['Space'])){const w=weps[curW];if(!reloading&&w.ammo>0&&performance.now()-lastFire>=w.rate)shoot();}},40);
+// Auto-fire is handled in the main rAF loop (no setInterval needed)
 </script>
 </body>
 </html>
