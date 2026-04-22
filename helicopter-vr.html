@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<title>ROTOR — LOW FLIGHT</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{background:#000;overflow:hidden;font-family:'Share Tech Mono',monospace;user-select:none;-webkit-user-select:none;
+  -webkit-tap-highlight-color:transparent;touch-action:none;overscroll-behavior:none;}
+#c{display:block;position:absolute;top:0;left:0;z-index:1;width:100vw;height:100vh;}
+#gc{display:block;position:absolute;top:0;left:0;z-index:2;pointer-events:none;width:100vw;height:100vh;}
+
+#overlay{position:fixed;inset:0;z-index:100;
+  background:radial-gradient(ellipse at 50% 30%,#0a1a2a 0%,#020508 70%,#000 100%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:18px;overflow-y:auto;}
+#overlay h1{font-family:'Orbitron',sans-serif;font-weight:700;font-size:clamp(1.8rem,6vw,4.4rem);
+  color:#6ed7ff;letter-spacing:6px;text-shadow:0 0 16px #2a7fbf,0 0 40px #0f4f7f;text-align:center;line-height:1.1;}
+#overlay h1 small{display:block;font-size:.45em;color:#9fe6ff;letter-spacing:8px;margin-top:6px;opacity:.7;}
+#overlay h2{font-family:'Orbitron',sans-serif;color:#aacfff;letter-spacing:5px;font-size:.85rem;opacity:.7;}
+.row{display:flex;flex-direction:column;align-items:center;gap:6px;width:100%;max-width:720px;}
+.rlabel{font-family:'Orbitron',sans-serif;color:#7ab5e0;font-size:.78rem;letter-spacing:3px;}
+.egrid{display:grid;gap:8px;width:100%;}
+.g3{grid-template-columns:repeat(3,1fr);}
+.g4{grid-template-columns:repeat(4,1fr);}
+.g2{grid-template-columns:repeat(2,1fr);}
+.ebtn{background:rgba(40,100,180,.10);border:1.5px solid rgba(80,160,220,.35);color:#bcd8ec;
+  padding:10px 6px;cursor:pointer;font-family:'Orbitron',sans-serif;font-size:.78rem;letter-spacing:1px;
+  border-radius:4px;text-align:center;transition:all .15s;}
+.ebtn:hover,.ebtn.sel{background:rgba(60,160,240,.22);border-color:#6ed7ff;color:#fff;
+  box-shadow:0 0 14px rgba(80,200,255,.45);}
+.ebtn span{font-size:1.4rem;display:block;margin-bottom:2px;}
+.ebtn{position:relative;}
+.autotag{display:none;position:absolute;top:3px;right:4px;font-size:.55rem;letter-spacing:1px;
+  color:#0b1420;background:#7ee0ff;padding:1px 4px;border-radius:2px;font-weight:700;}
+.ebtn.autosel .autotag{display:block;}
+#startBtn{background:linear-gradient(135deg,#1a4d7a,#3ea2e0);color:#fff;border:none;
+  padding:14px 52px;font-family:'Orbitron',sans-serif;font-weight:700;font-size:1.3rem;letter-spacing:4px;
+  cursor:pointer;border-radius:5px;box-shadow:0 0 22px #3fa2e0;transition:transform .15s;margin-top:6px;}
+#startBtn:hover{transform:scale(1.04);}
+.hint{color:#7ab5e0;font-size:.72rem;text-align:center;line-height:1.8;max-width:700px;}
+.hint b{color:#bcd8ec;}
+#errmsg{color:#ff6666;font-size:.9rem;text-align:center;display:none;padding:10px;border:1px solid #ff6666;border-radius:4px;}
+
+#hud{position:fixed;inset:0;pointer-events:none;z-index:10;display:none;}
+#topbar{position:absolute;top:env(safe-area-inset-top,10px);left:10px;right:10px;
+  display:flex;justify-content:space-between;font-family:'Orbitron',sans-serif;font-size:.8rem;color:#8fffaa;
+  text-shadow:0 0 4px #00ff66;}
+#topbar .blk{background:rgba(0,20,10,.55);border:1px solid rgba(0,255,130,.3);padding:5px 10px;border-radius:3px;}
+#scorehud span{color:#fff;}
+#instr-panel{position:absolute;bottom:env(safe-area-inset-bottom,14px);left:50%;transform:translateX(-50%);
+  font-family:'Share Tech Mono',monospace;color:#8fffaa;font-size:.78rem;text-align:center;
+  background:rgba(0,20,10,.45);border:1px solid rgba(0,255,130,.3);padding:4px 10px;border-radius:3px;opacity:.55;}
+
+#boostBtn{position:fixed;right:24px;bottom:calc(env(safe-area-inset-bottom,18px) + 18px);
+  width:84px;height:84px;border-radius:50%;
+  background:radial-gradient(circle,rgba(255,140,40,.35),rgba(180,60,0,.1) 70%);
+  border:2px solid #ff8a33;color:#ffe0a0;font-family:'Orbitron',sans-serif;letter-spacing:2px;font-size:.85rem;
+  z-index:15;display:none;cursor:pointer;touch-action:none;user-select:none;
+  box-shadow:0 0 18px rgba(255,140,40,.55);}
+#boostBtn.active{background:radial-gradient(circle,#ffaa33,#aa4400 70%);color:#fff;}
+
+#menuBtn{position:fixed;top:calc(env(safe-area-inset-top,10px) + 4px);right:10px;
+  width:40px;height:40px;border-radius:4px;background:rgba(0,20,10,.55);border:1px solid rgba(0,255,130,.3);
+  color:#8fffaa;font-family:'Orbitron',sans-serif;font-size:.7rem;z-index:20;display:none;cursor:pointer;}
+
+#gameover{position:fixed;inset:0;background:rgba(3,10,18,.92);z-index:200;
+  display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;}
+#gameover h1{font-family:'Orbitron',sans-serif;font-size:clamp(2rem,7vw,4rem);color:#ff5555;
+  text-shadow:0 0 30px #ff2200;letter-spacing:6px;}
+#goquip{font-family:'Orbitron',sans-serif;font-size:1rem;color:#ffaa55;letter-spacing:3px;}
+#gostats{color:#bcd8ec;font-size:1.05rem;line-height:2;text-align:center;font-family:'Share Tech Mono',monospace;}
+#gostats span{color:#fff;}
+.gbtn{background:linear-gradient(135deg,#1a4d7a,#3ea2e0);color:#fff;border:none;
+  padding:11px 36px;font-family:'Orbitron',sans-serif;font-weight:700;font-size:1.05rem;letter-spacing:3px;
+  cursor:pointer;border-radius:5px;margin:0 6px;}
+.gbtn.alt{background:linear-gradient(135deg,#2a2a2a,#555);}
+.gbtn:hover{transform:scale(1.04);}
+
+#flash{position:fixed;inset:0;background:rgba(255,255,255,0);pointer-events:none;z-index:12;transition:background .12s;}
+#damvign{position:fixed;inset:0;pointer-events:none;z-index:8;
+  box-shadow:inset 0 0 240px 40px rgba(0,0,0,.55);background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.55) 100%);}
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <h1>ROTOR<small>— LOW FLIGHT —</small></h1>
+  <h2>VALLEY PATROL / NAP-OF-THE-EARTH</h2>
+
+  <div class="row"><div class="rlabel">DIFFICULTY</div>
+    <div class="egrid g3" style="max-width:520px;">
+      <div class="ebtn" data-grp="diff" data-val="recon"><span>EASY</span>Recon</div>
+      <div class="ebtn sel" data-grp="diff" data-val="patrol"><span>STD</span>Patrol</div>
+      <div class="ebtn" data-grp="diff" data-val="hot"><span>HOT</span>Hot Zone</div>
+    </div>
+  </div>
+
+  <div class="row"><div class="rlabel">TIME OF DAY</div>
+    <div class="egrid g4" style="max-width:620px;">
+      <div class="ebtn" data-grp="tod" data-val="dawn"><span>&#127746;</span>Dawn</div>
+      <div class="ebtn sel" data-grp="tod" data-val="noon"><span>&#9728;&#65039;</span>Noon</div>
+      <div class="ebtn" data-grp="tod" data-val="dusk"><span>&#127751;</span>Dusk</div>
+      <div class="ebtn" data-grp="tod" data-val="night"><span>&#127769;</span>Night</div>
+    </div>
+  </div>
+
+  <div class="row"><div class="rlabel">WEATHER</div>
+    <div class="egrid g3" style="max-width:520px;">
+      <div class="ebtn sel" data-grp="wx" data-val="clear"><span>&#9728;&#65039;</span>Clear</div>
+      <div class="ebtn" data-grp="wx" data-val="haze"><span>&#127787;</span>Haze</div>
+      <div class="ebtn" data-grp="wx" data-val="storm"><span>&#9889;</span>Storm</div>
+    </div>
+  </div>
+
+  <div class="row"><div class="rlabel">CONTROLS</div>
+    <div class="egrid g2" style="max-width:420px;" id="ctlGrid">
+      <div class="ebtn" data-grp="ctl" data-val="touch"><span>&#128241;</span>Touch<div class="autotag">AUTO</div></div>
+      <div class="ebtn" data-grp="ctl" data-val="desktop"><span>&#128187;</span>Desktop<div class="autotag">AUTO</div></div>
+    </div>
+  </div>
+
+  <button id="startBtn" onclick="startGame()">START FLIGHT</button>
+  <div class="hint" id="hintText"></div>
+  <div id="errmsg"></div>
+</div>
+
+<canvas id="c"></canvas>
+<canvas id="gc"></canvas>
+<div id="damvign"></div>
+<div id="flash"></div>
+
+<div id="hud">
+  <div id="topbar">
+    <div class="blk" id="scorehud">DIST <span id="distv">0</span> m &nbsp;&nbsp; x<span id="multv">1.0</span></div>
+    <div class="blk" id="timehud">T+<span id="timev">0</span>s</div>
+  </div>
+  <div id="instr-panel"></div>
+</div>
+<button id="boostBtn">BOOST</button>
+<button id="menuBtn" onclick="goMenu()">MENU</button>
+
+<div id="gameover">
+  <h1>ROTOR DOWN</h1>
+  <div id="goquip"></div>
+  <div id="gostats"></div>
+  <div>
+    <button class="gbtn" onclick="restartGame()">FLY AGAIN</button>
+    <button class="gbtn alt" onclick="goMenu()">MENU</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+'use strict';
+
+// ============================================================
+//  ROTOR — LOW FLIGHT
+//  Single-file Three.js helicopter flight toy with procedural
+//  terrain, winding road, obstacles, cockpit HUD, touch+keys.
+// ============================================================
+
+const STATE={
+  diff:'patrol', tod:'noon', wx:'clear', ctl:'touch',
+  started:false, over:false,
+};
+
+// Detect platform --------------------------------------------
+// Flag a device as touch if it has a touch interface AND a coarse pointer
+// (iPhone / iPad / Android). Laptops with touchscreens still report a
+// fine pointer, so they get the Desktop default.
+const HAS_TOUCH=('ontouchstart' in window)||(navigator.maxTouchPoints>0);
+const COARSE=(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+const IS_TOUCH = HAS_TOUCH && COARSE;
+const AUTO_CTL = IS_TOUCH ? 'touch' : 'desktop';
+STATE.ctl = AUTO_CTL;
+
+// ─── OVERLAY UI ─────────────────────────────────────────────
+document.querySelectorAll('.ebtn').forEach(b=>{
+  b.addEventListener('click',()=>{
+    const g=b.dataset.grp;
+    document.querySelectorAll('.ebtn[data-grp="'+g+'"]').forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    STATE[g]=b.dataset.val;
+    updateHint();
+  });
+});
+// Apply auto-detected default to CONTROLS + mark the AUTO tile
+document.querySelectorAll('.ebtn[data-grp="ctl"]').forEach(b=>{
+  b.classList.toggle('sel',     b.dataset.val===STATE.ctl);
+  b.classList.toggle('autosel', b.dataset.val===AUTO_CTL);
+});
+// Apply initial .sel for other groups (matches STATE defaults)
+['diff','tod','wx'].forEach(g=>{
+  document.querySelectorAll('.ebtn[data-grp="'+g+'"]').forEach(b=>{
+    b.classList.toggle('sel', b.dataset.val===STATE[g]);
+  });
+});
+function updateHint(){
+  const el=document.getElementById('hintText');
+  const auto = (STATE.ctl===AUTO_CTL) ? ' &nbsp;<span style="color:#7ee0ff;">(auto-detected for your device)</span>' : '';
+  if(STATE.ctl==='touch'){
+    el.innerHTML='<b>LEFT STICK</b> &ndash; pitch (fwd/back) &amp; roll (L/R) &nbsp;|&nbsp; <b>RIGHT STICK</b> &ndash; yaw (L/R) &amp; throttle (up/down) &nbsp;|&nbsp; <b>BOOST</b> button bottom-right'+auto;
+  } else {
+    el.innerHTML='<b>MOUSE</b> look (yaw / pitch) &nbsp;|&nbsp; <b>A/D</b> roll &nbsp;|&nbsp; <b>W/S</b> pitch trim &nbsp;|&nbsp; <b>Shift/Ctrl</b> throttle up/down &nbsp;|&nbsp; <b>Space</b> boost &nbsp;|&nbsp; <b>Esc</b> release mouse'+auto;
+  }
+}
+updateHint();
+
+// ─── THREE SETUP ─────────────────────────────────────────────
+let renderer, scene, camera, clock, hud2d, hudCtx;
+let WEBGL_OK=true;
+try{
+  renderer = new THREE.WebGLRenderer({canvas:document.getElementById('c'), antialias:true, powerPreference:'high-performance'});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 1.5));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+} catch(e){
+  WEBGL_OK=false;
+  const em=document.getElementById('errmsg');
+  em.style.display='block';
+  em.textContent='WebGL failed to initialise on this device. '+e.message;
+}
+
+scene = new THREE.Scene();
+camera = new THREE.PerspectiveCamera(72, window.innerWidth/window.innerHeight, 0.5, 2500);
+clock = new THREE.Clock();
+hud2d = document.getElementById('gc');
+hudCtx = hud2d.getContext('2d');
+
+function resize(){
+  const w=window.innerWidth, h=window.innerHeight;
+  if(renderer){ renderer.setSize(w,h,false); }
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+  const dpr=Math.min(window.devicePixelRatio||1,1.5);
+  hud2d.width=w*dpr; hud2d.height=h*dpr; hud2d.style.width=w+'px'; hud2d.style.height=h+'px';
+  hudCtx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize',resize);
+resize();
+
+// ─── TOD / WEATHER PRESETS ──────────────────────────────────
+const TOD_PRESETS={
+  dawn:{top:[1.0,0.55,0.45], bot:[1.0,0.78,0.55], sunDir:[0.6,0.35,0.7], sunColor:0xffd6a0, sunAlt:0.35, amb:0x553322, hemi:[0xffbb88,0x553322,0.45], fog:0xe8b088, fogD:0.0022, dir:0xffd1a0, dirI:0.85, star:0},
+  noon:{top:[0.18,0.45,0.8], bot:[0.72,0.88,0.98], sunDir:[0.3,0.9,0.4], sunColor:0xffffff, sunAlt:0.85, amb:0x4a6a8a, hemi:[0x87ceeb,0x3a5a3a,0.65], fog:0xb9cfe0, fogD:0.0012, dir:0xffffff, dirI:1.0, star:0},
+  dusk:{top:[0.25,0.1,0.35], bot:[1.0,0.45,0.25], sunDir:[-0.5,0.2,-0.6], sunColor:0xff7733, sunAlt:0.22, amb:0x442233, hemi:[0xff7755,0x221133,0.4], fog:0xc86644, fogD:0.0022, dir:0xff9955, dirI:0.7, star:0},
+  night:{top:[0.01,0.02,0.08], bot:[0.06,0.08,0.15], sunDir:[-0.3,0.55,-0.7], sunColor:0xaabbff, sunAlt:0.7, amb:0x223355, hemi:[0x445577,0x111122,0.3], fog:0x0a1020, fogD:0.0028, dir:0x99aadd, dirI:0.35, star:1},
+};
+const WX_MOD={
+  clear:{fogMul:1.0, dirMul:1.0, ambMul:1.0, storm:false},
+  haze :{fogMul:2.2, dirMul:0.8, ambMul:0.9, storm:false},
+  storm:{fogMul:3.2, dirMul:0.4, ambMul:0.7, storm:true},
+};
+
+let sky, sunSprite, hemi, dirL, ambL, fogC, stars;
+
+function buildSky(){
+  if(sky){scene.remove(sky); sky.geometry.dispose(); sky.material.dispose();}
+  const geo = new THREE.SphereGeometry(1800,32,16);
+  const p = TOD_PRESETS[STATE.tod];
+  const mat = new THREE.ShaderMaterial({
+    side:THREE.BackSide, depthWrite:false,
+    uniforms:{
+      topC:{value:new THREE.Color().fromArray(p.top)},
+      botC:{value:new THREE.Color().fromArray(p.bot)},
+      sunDir:{value:new THREE.Vector3().fromArray(p.sunDir).normalize()},
+      sunColor:{value:new THREE.Color(p.sunColor)},
+      stormy:{value:STATE.wx==='storm'?1.0:0.0},
+      flash:{value:0.0},
+    },
+    vertexShader:`
+      varying vec3 vW;
+      void main(){
+        vW=normalize(position);
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+      }`,
+    fragmentShader:`
+      varying vec3 vW;
+      uniform vec3 topC; uniform vec3 botC; uniform vec3 sunDir; uniform vec3 sunColor;
+      uniform float stormy; uniform float flash;
+      void main(){
+        float t = clamp(vW.y*0.5+0.5, 0.0, 1.0);
+        vec3 col = mix(botC, topC, pow(t, 1.2));
+        float d = max(dot(normalize(vW), normalize(sunDir)), 0.0);
+        col += sunColor * pow(d, 160.0) * 1.4;
+        col += sunColor * pow(d, 8.0) * 0.25;
+        col = mix(col, col*vec3(0.35,0.4,0.5), stormy*0.55);
+        col += vec3(flash);
+        gl_FragColor = vec4(col,1.0);
+      }`
+  });
+  sky = new THREE.Mesh(geo, mat);
+  sky.renderOrder = -10;
+  scene.add(sky);
+}
+
+function makeSunSprite(col){
+  const cvs = document.createElement('canvas'); cvs.width=cvs.height=256;
+  const g = cvs.getContext('2d');
+  const rg = g.createRadialGradient(128,128,4,128,128,128);
+  const c = new THREE.Color(col);
+  const hex = '#'+c.getHexString();
+  rg.addColorStop(0,'rgba(255,255,255,1)');
+  rg.addColorStop(0.18,hex);
+  rg.addColorStop(0.55,'rgba('+(c.r*255|0)+','+(c.g*255|0)+','+(c.b*255|0)+',0.25)');
+  rg.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=rg; g.fillRect(0,0,256,256);
+  const tex = new THREE.CanvasTexture(cvs);
+  const mat = new THREE.SpriteMaterial({map:tex, blending:THREE.AdditiveBlending, depthWrite:false, depthTest:false, transparent:true});
+  return new THREE.Sprite(mat);
+}
+
+function buildLighting(){
+  const p = TOD_PRESETS[STATE.tod], w=WX_MOD[STATE.wx];
+  if(hemi)scene.remove(hemi);
+  if(dirL)scene.remove(dirL);
+  if(ambL)scene.remove(ambL);
+  hemi = new THREE.HemisphereLight(p.hemi[0], p.hemi[1], p.hemi[2]*w.ambMul);
+  scene.add(hemi);
+  ambL = new THREE.AmbientLight(p.amb, 0.4*w.ambMul);
+  scene.add(ambL);
+  dirL = new THREE.DirectionalLight(p.dir, p.dirI*w.dirMul);
+  dirL.position.set(p.sunDir[0], p.sunDir[1], p.sunDir[2]).normalize().multiplyScalar(600);
+  scene.add(dirL);
+  fogC = new THREE.Color(p.fog);
+  scene.fog = new THREE.FogExp2(fogC.getHex(), p.fogD*w.fogMul);
+  scene.background = null; // sky dome handles it
+
+  if(sunSprite){scene.remove(sunSprite); sunSprite.material.map.dispose(); sunSprite.material.dispose();}
+  sunSprite = makeSunSprite(p.sunColor);
+  const s = STATE.tod==='noon'?90:130;
+  sunSprite.scale.set(s,s,1);
+  const sd=new THREE.Vector3().fromArray(p.sunDir).normalize().multiplyScalar(1500);
+  sunSprite.position.copy(sd);
+  scene.add(sunSprite);
+
+  if(stars){scene.remove(stars); stars.geometry.dispose(); stars.material.dispose(); stars=null;}
+  if(p.star){
+    const N=1200;
+    const pos = new Float32Array(N*3);
+    for(let i=0;i<N;i++){
+      const v = new THREE.Vector3((Math.random()-0.5), Math.random()*0.7+0.05, (Math.random()-0.5)).normalize().multiplyScalar(1700);
+      pos[i*3]=v.x; pos[i*3+1]=v.y; pos[i*3+2]=v.z;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    const m = new THREE.PointsMaterial({color:0xffffff, size:2.2, sizeAttenuation:false, transparent:true, opacity:0.85, depthWrite:false});
+    stars = new THREE.Points(g,m);
+    stars.renderOrder=-9;
+    scene.add(stars);
+  }
+}
+
+// ─── NOISE (simple sum-of-sines pseudo-noise) ─────────────
+function pnoise(x,z){
+  // layered sines — cheap but plenty for rolling hills
+  let n = 0;
+  n += Math.sin(x*0.013 + z*0.008)*14;
+  n += Math.sin(x*0.028 - z*0.019 + 1.3)*7.2;
+  n += Math.sin(x*0.055 + z*0.047 + 2.7)*3.1;
+  n += Math.sin(x*0.11 - z*0.093 + 4.1)*1.4;
+  n += Math.sin(x*0.22 + z*0.21 + 0.9)*0.6;
+  return n;
+}
+function hashFloat(i){ const s=Math.sin(i*12.9898)*43758.5453; return s-Math.floor(s); }
+
+// terrain ground level at world (x,z). Valley along road centre.
+let ROAD; // filled below
+function groundY(x,z){
+  let y = pnoise(x,z);
+  // carve a gentle valley near the road centreline
+  if(ROAD){
+    const d2 = ROAD.distSqTo(x,z);
+    const valleyR = 90;
+    if(d2 < valleyR*valleyR){
+      const t = 1 - Math.sqrt(d2)/valleyR;
+      y -= 6*t*t;
+    }
+  }
+  return y;
+}
+
+// ─── ROAD SPLINE ─────────────────────────────────────────────
+function buildRoadSpline(){
+  const pts=[];
+  const N=80;
+  let x=0, z=0;
+  let hx=0; // heading
+  for(let i=0;i<N;i++){
+    // wandering heading
+    hx += (hashFloat(i*3.7)-0.5)*0.55;
+    const step=90;
+    x += Math.sin(hx)*step;
+    z -= Math.cos(hx)*step;
+    const y = pnoise(x,z)+2.5 + Math.sin(i*0.17)*1.5;
+    pts.push(new THREE.Vector3(x,y,z));
+  }
+  const spline = new THREE.CatmullRomCurve3(pts,false,'catmullrom',0.3);
+  return {pts, spline};
+}
+
+let roadObj;
+function makeRoadTexture(){
+  const w=64,h=512;
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  const g=cv.getContext('2d');
+  g.fillStyle='#2a2a2a'; g.fillRect(0,0,w,h);
+  // edge lines
+  g.fillStyle='#cfcfa8'; g.fillRect(2,0,2,h); g.fillRect(w-4,0,2,h);
+  // dashed centre
+  g.fillStyle='#ffffff';
+  for(let y=0;y<h;y+=42){ g.fillRect(w/2-1, y, 2, 22); }
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  t.repeat.set(1,40);
+  return t;
+}
+
+function buildRoad(spline){
+  const segs = 600;
+  const halfW = 6.5;
+  const positions=[], uvs=[], indices=[];
+  const tmp = new THREE.Vector3(), up=new THREE.Vector3(0,1,0), binorm=new THREE.Vector3();
+  const len = spline.getLength();
+  for(let i=0;i<=segs;i++){
+    const t = i/segs;
+    const p = spline.getPointAt(t);
+    const tang = spline.getTangentAt(t).normalize();
+    binorm.crossVectors(up,tang).normalize();
+    const pL = tmp.copy(p).addScaledVector(binorm, -halfW);
+    positions.push(pL.x, pL.y+0.25, pL.z);
+    const pR = tmp.copy(p).addScaledVector(binorm, halfW);
+    positions.push(pR.x, pR.y+0.25, pR.z);
+    uvs.push(0, t*40);
+    uvs.push(1, t*40);
+  }
+  for(let i=0;i<segs;i++){
+    const a=i*2,b=i*2+1,c=(i+1)*2,d=(i+1)*2+1;
+    indices.push(a,c,b,  b,c,d);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs,2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const mat=new THREE.MeshStandardMaterial({map:makeRoadTexture(), roughness:0.95, metalness:0.0});
+  return new THREE.Mesh(geo, mat);
+}
+
+// provide distance-sq-to-road lookup (sampled polyline)
+function sampleRoadPolyline(spline, n=900){
+  const arr=[];
+  for(let i=0;i<=n;i++){
+    arr.push(spline.getPointAt(i/n));
+  }
+  return arr;
+}
+let ROADPTS=[];
+function roadDistSq(x,z){
+  let best=Infinity;
+  // coarse — sample every 4th point first
+  let bestI=0;
+  for(let i=0;i<ROADPTS.length;i+=6){
+    const p=ROADPTS[i]; const dx=p.x-x, dz=p.z-z; const d=dx*dx+dz*dz;
+    if(d<best){best=d; bestI=i;}
+  }
+  // refine window
+  const s=Math.max(0,bestI-6), e=Math.min(ROADPTS.length-1,bestI+6);
+  for(let i=s;i<=e;i++){
+    const p=ROADPTS[i]; const dx=p.x-x, dz=p.z-z; const d=dx*dx+dz*dz;
+    if(d<best)best=d;
+  }
+  return best;
+}
+
+// ─── TERRAIN ─────────────────────────────────────────────────
+let terrain;
+function buildTerrain(){
+  const SIZE=2400, SEG=150;
+  const geo=new THREE.PlaneGeometry(SIZE,SIZE,SEG,SEG);
+  geo.rotateX(-Math.PI/2);
+  const pos=geo.attributes.position;
+  const colors=new Float32Array(pos.count*3);
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), z=pos.getZ(i);
+    const y=groundY(x,z);
+    pos.setY(i,y);
+    // colour by height
+    let r,g,b;
+    if(y<2){ r=0.23;g=0.45;b=0.22; }
+    else if(y<10){ const t=(y-2)/8; r=0.23+t*0.22; g=0.45-t*0.13; b=0.22-t*0.02; }
+    else if(y<18){ const t=(y-10)/8; r=0.45+t*0.15; g=0.32+t*0.05; b=0.2+t*0.05; }
+    else { const t=Math.min(1,(y-18)/6); r=0.6+t*0.35; g=0.55+t*0.4; b=0.52+t*0.45; }
+    // subtle AO
+    const ao=0.82+(Math.sin(x*0.12+z*0.09)*0.5+0.5)*0.18;
+    colors[i*3]=r*ao; colors[i*3+1]=g*ao; colors[i*3+2]=b*ao;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
+  geo.computeVertexNormals();
+  const mat=new THREE.MeshStandardMaterial({vertexColors:true, flatShading:true, roughness:1.0, metalness:0.0});
+  const m=new THREE.Mesh(geo,mat);
+  m.position.y=0;
+  return m;
+}
+
+// ─── TREES (InstancedMesh) ────────────────────────────────
+let treesA, treesB;
+function buildTrees(){
+  const trunkG=new THREE.CylinderGeometry(0.3,0.45,2.4,6);
+  trunkG.translate(0,1.2,0);
+  const foliageG=new THREE.ConeGeometry(2.2,5.5,7);
+  foliageG.translate(0,4.3,0);
+  const trunkM=new THREE.MeshStandardMaterial({color:0x553322, flatShading:true, roughness:1});
+  const folM=new THREE.MeshStandardMaterial({color:0x2f6a34, flatShading:true, roughness:1});
+  const N=1200;
+  treesA=new THREE.InstancedMesh(trunkG,trunkM,N);
+  treesB=new THREE.InstancedMesh(foliageG,folM,N);
+  treesA.frustumCulled=false; treesB.frustumCulled=false;
+  const m=new THREE.Matrix4(), q=new THREE.Quaternion(), s=new THREE.Vector3(), p=new THREE.Vector3();
+  let placed=0;
+  while(placed<N){
+    const x=(Math.random()-0.5)*2200, z=(Math.random()-0.5)*2200;
+    const d2=roadDistSq(x,z);
+    if(d2<28*28) continue;
+    const y=groundY(x,z);
+    if(y<1.5||y>16) continue;
+    const sc=0.7+Math.random()*0.9;
+    p.set(x,y,z); s.set(sc,sc,sc); q.setFromAxisAngle(new THREE.Vector3(0,1,0), Math.random()*Math.PI*2);
+    m.compose(p,q,s);
+    treesA.setMatrixAt(placed,m); treesB.setMatrixAt(placed,m);
+    placed++;
+  }
+  treesA.instanceMatrix.needsUpdate=true;
+  treesB.instanceMatrix.needsUpdate=true;
+  scene.add(treesA); scene.add(treesB);
+}
+
+// ─── OBSTACLES ────────────────────────────────────────────
+const OBSTACLES=[]; // each {mesh, kind, pos, r, hitY}
+
+function makePylonGeometry(){
+  // lattice tower via thin boxes combined into one geometry via merge-less approach:
+  // build as a Group and return as-is; we'll instance by duplicating the mesh.
+  const g=new THREE.Group();
+  const legMat=new THREE.MeshStandardMaterial({color:0x888888, roughness:0.8, metalness:0.3});
+  const H=32;
+  for(let i=0;i<4;i++){
+    const a=i*Math.PI/2+Math.PI/4;
+    const leg=new THREE.Mesh(new THREE.BoxGeometry(0.4, H, 0.4), legMat);
+    leg.position.set(Math.cos(a)*2.4, H/2, Math.sin(a)*2.4);
+    // taper by slight rotation (approximate)
+    g.add(leg);
+  }
+  // horizontal braces at levels
+  for(let h=4; h<H; h+=5){
+    for(let i=0;i<4;i++){
+      const a=i*Math.PI/2;
+      const bx=new THREE.Mesh(new THREE.BoxGeometry(5, 0.2, 0.2), legMat);
+      bx.position.set(Math.cos(a+Math.PI/4)*2.4*Math.cos(Math.PI/4)*0, h, 0);
+      bx.rotation.y=a+Math.PI/4;
+      bx.position.x = Math.cos(a)*0;
+      // simpler: place along each side
+      bx.position.set(0,h,0);
+      bx.position.x = Math.cos(a)*2.4;
+      bx.position.z = Math.sin(a)*2.4;
+      bx.rotation.y = a+Math.PI/2;
+      g.add(bx);
+    }
+    // cross bracing X
+    for(let i=0;i<4;i++){
+      const a=i*Math.PI/2;
+      const dx=new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.12, 0.12), legMat);
+      dx.position.set(Math.cos(a)*2.4, h+2.5, Math.sin(a)*2.4);
+      dx.rotation.y = a+Math.PI/2;
+      dx.rotation.z = Math.PI/6;
+      g.add(dx);
+      const dx2 = dx.clone();
+      dx2.rotation.z = -Math.PI/6;
+      g.add(dx2);
+    }
+  }
+  // cap + red light
+  const cap=new THREE.Mesh(new THREE.BoxGeometry(6,0.5,6), legMat);
+  cap.position.y=H+0.25;
+  g.add(cap);
+  const light=new THREE.Mesh(new THREE.SphereGeometry(0.55,8,8),
+    new THREE.MeshBasicMaterial({color:0xff2222}));
+  light.position.y=H+1.1;
+  g.add(light);
+  return {group:g, H:H+1.5};
+}
+const PYLON_PROTO = (function(){const p=makePylonGeometry(); return p;})();
+
+function cloneGroup(src){
+  const g=new THREE.Group();
+  src.children.forEach(c=>{
+    const n=new THREE.Mesh(c.geometry, c.material);
+    n.position.copy(c.position);
+    n.rotation.copy(c.rotation);
+    n.scale.copy(c.scale);
+    g.add(n);
+  });
+  return g;
+}
+
+function placePylon(p){
+  const g=cloneGroup(PYLON_PROTO.group);
+  g.position.set(p.x, groundY(p.x,p.z), p.z);
+  scene.add(g);
+  OBSTACLES.push({mesh:g, kind:'pylon', pos:new THREE.Vector3(p.x, g.position.y+PYLON_PROTO.H*0.5, p.z), r:4, hitTop:g.position.y+PYLON_PROTO.H, hitBot:g.position.y});
+  return g;
+}
+
+function placeArch(p, tang){
+  const g=new THREE.Group();
+  const mat=new THREE.MeshStandardMaterial({color:0x555566, roughness:0.9});
+  const H=22, W=18;
+  const colGeo=new THREE.BoxGeometry(1.6, H, 1.6);
+  const c1=new THREE.Mesh(colGeo,mat); c1.position.set(-W/2, H/2, 0); g.add(c1);
+  const c2=new THREE.Mesh(colGeo,mat); c2.position.set( W/2, H/2, 0); g.add(c2);
+  const beam=new THREE.Mesh(new THREE.BoxGeometry(W+2, 2.2, 2.5), mat);
+  beam.position.set(0, H+1, 0); g.add(beam);
+  const sign=new THREE.Mesh(new THREE.BoxGeometry(10,2.5,0.3),
+    new THREE.MeshStandardMaterial({color:0xffcc44, emissive:0x221100}));
+  sign.position.set(0, H+0.3, 0.8); g.add(sign);
+  g.position.set(p.x, groundY(p.x,p.z), p.z);
+  g.rotation.y = Math.atan2(tang.x, tang.z) + Math.PI/2;
+  scene.add(g);
+  OBSTACLES.push({mesh:g, kind:'arch', pos:new THREE.Vector3(p.x, g.position.y+H*0.6, p.z), r:12, hitTop:g.position.y+H+2.2, hitBot:g.position.y});
+  return g;
+}
+
+function placeBuilding(p){
+  const g=new THREE.Group();
+  const sz=4+Math.random()*6, h=6+Math.random()*10;
+  const mat=new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(0.08+Math.random()*0.08,0.35,0.35+Math.random()*0.15), flatShading:true, roughness:0.95});
+  const body=new THREE.Mesh(new THREE.BoxGeometry(sz, h, sz), mat);
+  body.position.y=h/2;
+  g.add(body);
+  // roof
+  const roof=new THREE.Mesh(new THREE.ConeGeometry(sz*0.75, 3, 4),
+    new THREE.MeshStandardMaterial({color:0x552222, flatShading:true}));
+  roof.position.y=h+1.5; roof.rotation.y=Math.PI/4;
+  g.add(roof);
+  g.position.set(p.x, groundY(p.x,p.z), p.z);
+  g.rotation.y=Math.random()*Math.PI;
+  scene.add(g);
+  OBSTACLES.push({mesh:g, kind:'bldg', pos:new THREE.Vector3(p.x, g.position.y+h/2, p.z), r:sz*0.8, hitTop:g.position.y+h+3, hitBot:g.position.y});
+  return g;
+}
+
+function placeCable(a,b){
+  const dx=b.x-a.x, dy=b.y-a.y, dz=b.z-a.z;
+  const len=Math.sqrt(dx*dx+dy*dy+dz*dz);
+  const geo=new THREE.CylinderGeometry(0.14,0.14,len,5);
+  const mat=new THREE.MeshStandardMaterial({color:0x222222});
+  const m=new THREE.Mesh(geo,mat);
+  m.position.set((a.x+b.x)/2,(a.y+b.y)/2,(a.z+b.z)/2);
+  m.lookAt(b);
+  m.rotateX(Math.PI/2);
+  scene.add(m);
+  OBSTACLES.push({mesh:m, kind:'cable', pos:m.position.clone(), r:1.0, a:a.clone(), b:b.clone()});
+  return m;
+}
+
+function placeBalloon(p){
+  const g=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.SphereGeometry(3.2,14,12),
+    new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(Math.random(),0.7,0.55), flatShading:true}));
+  body.position.y=0;
+  const basket=new THREE.Mesh(new THREE.BoxGeometry(1.6,1.2,1.6),
+    new THREE.MeshStandardMaterial({color:0x664422, flatShading:true}));
+  basket.position.y=-4;
+  g.add(body); g.add(basket);
+  // ropes (just a thin cylinder)
+  const rope=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,3.4,4),
+    new THREE.MeshBasicMaterial({color:0x221100}));
+  rope.position.y=-2;
+  g.add(rope);
+  g.position.set(p.x, p.y, p.z);
+  g.userData.drift = (Math.random()-0.5)*0.05;
+  g.userData.bobPhase = Math.random()*Math.PI*2;
+  scene.add(g);
+  OBSTACLES.push({mesh:g, kind:'balloon', pos:g.position, r:3.6, hitTop:0, hitBot:0});
+  return g;
+}
+
+function populateObstacles(spline){
+  const diff = STATE.diff;
+  const densityMul = diff==='recon'?0.55 : diff==='hot'?1.6 : 1.0;
+  const len = spline.getLength();
+  // pylons — pairs so cables can span them
+  let prevPylon=null;
+  const pylonStep = 140/densityMul;
+  for(let d=120; d<len-80; d+=pylonStep + Math.random()*40){
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t);
+    const nx=-tang.z, nz=tang.x;
+    // pick side
+    const side = (Math.random()<0.5?-1:1);
+    const off = 22+Math.random()*18;
+    const pt={x:p.x+nx*off*side, z:p.z+nz*off*side};
+    const py=placePylon(pt);
+    const pylonTop=new THREE.Vector3(pt.x, groundY(pt.x,pt.z)+PYLON_PROTO.H-2, pt.z);
+    // place a partner pylon on the opposite side sometimes, with a cable spanning
+    if(Math.random()<0.5){
+      const pt2={x:p.x-nx*off, z:p.z-nz*off};
+      placePylon(pt2);
+      const pylonTop2=new THREE.Vector3(pt2.x, groundY(pt2.x,pt2.z)+PYLON_PROTO.H-2, pt2.z);
+      placeCable(pylonTop, pylonTop2);
+    } else if(prevPylon && Math.random()<0.55){
+      placeCable(pylonTop, prevPylon);
+    }
+    prevPylon = pylonTop;
+  }
+  // arches
+  const archStep = 380/densityMul;
+  for(let d=220; d<len-80; d+=archStep + Math.random()*80){
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t);
+    placeArch(p,tang);
+  }
+  // buildings alongside
+  const bldgStep = 70/densityMul;
+  for(let d=80; d<len-60; d+=bldgStep + Math.random()*40){
+    if(Math.random()>0.45) continue;
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t);
+    const nx=-tang.z, nz=tang.x;
+    const side=Math.random()<0.5?-1:1;
+    const off=15+Math.random()*30;
+    placeBuilding({x:p.x+nx*off*side, z:p.z+nz*off*side});
+  }
+  // balloons — floating at varied altitudes
+  const balStep = 260/densityMul;
+  for(let d=150; d<len-60; d+=balStep + Math.random()*60){
+    if(Math.random()>0.7) continue;
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t);
+    const nx=-tang.z, nz=tang.x;
+    const side=Math.random()<0.5?-1:1;
+    const off=8+Math.random()*30;
+    const x=p.x+nx*off*side, z=p.z+nz*off*side;
+    const y=groundY(x,z)+15+Math.random()*22;
+    placeBalloon({x,y,z});
+  }
+}
+
+// ─── HELICOPTER (for cockpit view we still build one for rotor/tail visuals) ─
+let heli, mainRotor, tailRotor;
+function buildHeli(){
+  const g=new THREE.Group();
+  // main rotor disk — slightly forward & above camera so it's visible in cockpit
+  const diskGeo=new THREE.RingGeometry(3.2, 4.6, 32);
+  diskGeo.rotateX(-Math.PI/2);
+  const diskMat=new THREE.MeshBasicMaterial({color:0x111111, transparent:true, opacity:0.28, side:THREE.DoubleSide, depthWrite:false});
+  mainRotor=new THREE.Mesh(diskGeo, diskMat);
+  mainRotor.position.set(0, 1.8, 0.2);
+  g.add(mainRotor);
+  // rotor hub + two blades (slightly visible through disk)
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.35,0.3,10), new THREE.MeshStandardMaterial({color:0x222222}));
+  hub.position.set(0,1.8,0.2);
+  g.add(hub);
+  const bladeGeo=new THREE.BoxGeometry(9.0,0.08,0.35);
+  const bladeMat=new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.35});
+  const b1=new THREE.Mesh(bladeGeo,bladeMat); b1.position.copy(hub.position); g.add(b1);
+  const b2=new THREE.Mesh(bladeGeo,bladeMat); b2.position.copy(hub.position); b2.rotation.y=Math.PI/2; g.add(b2);
+  mainRotor.userData.blades=[b1,b2];
+  // tail rotor (visible if player looks far right) — we put it behind/right
+  const tailDisk=new THREE.Mesh(
+    new THREE.RingGeometry(0.9,1.3, 16),
+    new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.35, side:THREE.DoubleSide})
+  );
+  tailDisk.position.set(1.6, 0.9, -4.5);
+  tailDisk.rotation.z=Math.PI/2;
+  g.add(tailDisk);
+  tailRotor=tailDisk;
+  heli=g;
+  scene.add(g);
+}
+
+// ─── FLIGHT MODEL ────────────────────────────────────────
+const H = {
+  pos:new THREE.Vector3(0, 35, 0),
+  quat:new THREE.Quaternion(),
+  vel:new THREE.Vector3(0,0,-8),
+  ang:new THREE.Vector3(0,0,0),   // roll(z), yaw(y), pitch(x) input state
+  throttle:0.6,
+  boost:0,
+  alive:true,
+  startT:0,
+};
+// Input state: pitchIn(-1..1 forward-), rollIn(-1..1 right+), yawIn(-1..1 right+), throttleIn(-1..1 up+), boost(0/1)
+const IN = {pitch:0, roll:0, yaw:0, thr:0, boost:0};
+
+function resetHeli(){
+  // find a start position a bit before the spline start, aimed along the spline
+  if(roadObj && spline){
+    const p = spline.getPointAt(0.002);
+    const t = spline.getTangentAt(0.002).normalize();
+    H.pos.set(p.x, p.y+35, p.z);
+    const yaw = Math.atan2(t.x, t.z);
+    H.quat.setFromEuler(new THREE.Euler(0, yaw+Math.PI, 0, 'YXZ'));
+    H.vel.set(-t.x*8, 0, -t.z*8);
+  } else {
+    H.pos.set(0,35,0);
+    H.quat.identity();
+    H.vel.set(0,0,-8);
+  }
+  H.ang.set(0,0,0);
+  H.throttle=0.6; H.boost=0; H.alive=true;
+  H.startT = performance.now()/1000;
+  H.bestT = 0;
+}
+
+// ─── TOUCH / KEYBOARD INPUT ──────────────────────────────────
+const TOUCH={ lx:0, ly:0, rx:0, ry:0, lActive:false, rActive:false, lId:-1, rId:-1, lcx:0,lcy:0,rcx:0,rcy:0, boost:false };
+const KEYS={};
+const STICK_R = 70; // px visual radius
+
+function onPointerDown(e){
+  if(!STATE.started||STATE.over) return;
+  if(STATE.ctl==='desktop') return; // desktop uses mouse-look, not virtual sticks
+  e.preventDefault();
+  const half = window.innerWidth/2;
+  const x=e.clientX, y=e.clientY;
+  // BOOST button handled by its own listener
+  if(x<half && !TOUCH.lActive){
+    TOUCH.lActive=true; TOUCH.lId=e.pointerId; TOUCH.lcx=x; TOUCH.lcy=y; TOUCH.lx=0; TOUCH.ly=0;
+  } else if(x>=half && !TOUCH.rActive){
+    TOUCH.rActive=true; TOUCH.rId=e.pointerId; TOUCH.rcx=x; TOUCH.rcy=y; TOUCH.rx=0; TOUCH.ry=0;
+  }
+}
+function onPointerMove(e){
+  if(!STATE.started||STATE.over) return;
+  if(e.pointerId===TOUCH.lId){
+    const dx=e.clientX-TOUCH.lcx, dy=e.clientY-TOUCH.lcy;
+    const m=Math.min(1, Math.hypot(dx,dy)/STICK_R);
+    const a=Math.atan2(dy,dx);
+    TOUCH.lx=Math.cos(a)*m; TOUCH.ly=Math.sin(a)*m;
+  } else if(e.pointerId===TOUCH.rId){
+    const dx=e.clientX-TOUCH.rcx, dy=e.clientY-TOUCH.rcy;
+    const m=Math.min(1, Math.hypot(dx,dy)/STICK_R);
+    const a=Math.atan2(dy,dx);
+    TOUCH.rx=Math.cos(a)*m; TOUCH.ry=Math.sin(a)*m;
+  }
+}
+function onPointerUp(e){
+  if(e.pointerId===TOUCH.lId){TOUCH.lActive=false; TOUCH.lId=-1; TOUCH.lx=0; TOUCH.ly=0;}
+  if(e.pointerId===TOUCH.rId){TOUCH.rActive=false; TOUCH.rId=-1; TOUCH.rx=0; TOUCH.ry=0;}
+}
+document.addEventListener('pointerdown', onPointerDown, {passive:false});
+document.addEventListener('pointermove', onPointerMove, {passive:false});
+document.addEventListener('pointerup', onPointerUp, {passive:false});
+document.addEventListener('pointercancel', onPointerUp, {passive:false});
+
+window.addEventListener('keydown', e=>{
+  KEYS[e.code]=true;
+  if(e.code==='Space'){e.preventDefault();}
+},{passive:false});
+window.addEventListener('keyup',   e=>{KEYS[e.code]=false;});
+
+// ─── DESKTOP MOUSE-LOOK ────────────────────────────────────
+const MOUSE={dx:0, dy:0, locked:false};
+function tryLockPointer(){
+  if(STATE.ctl!=='desktop' || !STATE.started || STATE.over) return;
+  const cv=document.getElementById('c');
+  if(document.pointerLockElement!==cv && cv.requestPointerLock){
+    cv.requestPointerLock();
+  }
+}
+document.addEventListener('pointerlockchange', ()=>{
+  MOUSE.locked = (document.pointerLockElement===document.getElementById('c'));
+});
+window.addEventListener('mousemove', e=>{
+  if(!MOUSE.locked) return;
+  // Normalise by window height so sensitivity is resolution-independent
+  const s = 1/Math.max(1, window.innerHeight);
+  MOUSE.dx += (e.movementX||0) * s;
+  MOUSE.dy += (e.movementY||0) * s;
+});
+// Re-acquire pointer lock on click while playing in desktop mode
+document.addEventListener('click', e=>{
+  if(STATE.ctl==='desktop' && STATE.started && !STATE.over && !MOUSE.locked){
+    tryLockPointer();
+  }
+});
+
+// Boost button
+const boostEl=document.getElementById('boostBtn');
+['pointerdown','pointermove'].forEach(ev=>{
+  boostEl.addEventListener(ev, e=>{e.stopPropagation(); TOUCH.boost=true; boostEl.classList.add('active');});
+});
+['pointerup','pointercancel','pointerleave'].forEach(ev=>{
+  boostEl.addEventListener(ev, e=>{e.stopPropagation(); TOUCH.boost=false; boostEl.classList.remove('active');});
+});
+
+// prevent gesture scroll/zoom
+document.addEventListener('gesturestart', e=>e.preventDefault());
+document.addEventListener('touchmove', e=>{if(STATE.started)e.preventDefault();},{passive:false});
+document.addEventListener('dblclick', e=>e.preventDefault());
+
+// ─── AUDIO ────────────────────────────────────────────────
+let AC=null, masterGain=null, rotorOsc=null, rotorGain=null, rotorLFO=null;
+function unlockAudio(){
+  if(AC) return;
+  try{
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    masterGain = AC.createGain(); masterGain.gain.value=0.22; masterGain.connect(AC.destination);
+    rotorOsc = AC.createOscillator(); rotorOsc.type='sawtooth'; rotorOsc.frequency.value=90;
+    rotorGain = AC.createGain(); rotorGain.gain.value=0;
+    const lp = AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=360; lp.Q.value=0.6;
+    rotorOsc.connect(lp); lp.connect(rotorGain); rotorGain.connect(masterGain);
+    rotorLFO = AC.createOscillator(); rotorLFO.type='sine'; rotorLFO.frequency.value=14;
+    const lfoGain = AC.createGain(); lfoGain.gain.value=12;
+    rotorLFO.connect(lfoGain); lfoGain.connect(rotorOsc.frequency);
+    rotorOsc.start(); rotorLFO.start();
+  }catch(e){/* no audio */}
+}
+function crashBoom(){
+  if(!AC) return;
+  const t=AC.currentTime;
+  const o=AC.createOscillator(); o.type='sawtooth';
+  o.frequency.setValueAtTime(180,t); o.frequency.exponentialRampToValueAtTime(30,t+0.9);
+  const g=AC.createGain(); g.gain.setValueAtTime(0.5,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.9);
+  o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.95);
+}
+
+// ─── STORM LIGHTNING ─────────────────────────────────────
+let nextFlash=3 + Math.random()*6;
+function tickStorm(dt){
+  if(STATE.wx!=='storm') return;
+  nextFlash -= dt;
+  if(nextFlash<=0){
+    nextFlash = 5+Math.random()*10;
+    // screen flash
+    const f=document.getElementById('flash');
+    f.style.background='rgba(255,255,255,0.75)';
+    setTimeout(()=>{f.style.background='rgba(255,255,255,0.25)';},80);
+    setTimeout(()=>{f.style.background='rgba(255,255,255,0)';},200);
+    if(sky && sky.material.uniforms && sky.material.uniforms.flash){
+      sky.material.uniforms.flash.value = 0.6;
+      setTimeout(()=>{sky.material.uniforms.flash.value=0.2;},120);
+      setTimeout(()=>{sky.material.uniforms.flash.value=0.0;},280);
+    }
+  }
+}
+
+// ─── WORLD BUILD ───────────────────────────────────────────
+let spline=null;
+function buildWorld(){
+  // clear previous
+  while(OBSTACLES.length){
+    const o=OBSTACLES.pop();
+    scene.remove(o.mesh);
+  }
+  if(terrain){scene.remove(terrain); terrain.geometry.dispose(); terrain.material.dispose(); terrain=null;}
+  if(treesA){scene.remove(treesA); treesA.geometry.dispose(); treesA.material.dispose(); treesA=null;}
+  if(treesB){scene.remove(treesB); treesB.geometry.dispose(); treesB.material.dispose(); treesB=null;}
+  if(roadObj){scene.remove(roadObj); roadObj.geometry.dispose(); roadObj.material.dispose(); roadObj=null;}
+  if(heli){scene.remove(heli); heli=null;}
+
+  buildSky();
+  buildLighting();
+
+  const rd=buildRoadSpline();
+  spline=rd.spline;
+  ROADPTS = sampleRoadPolyline(spline, 900);
+  ROAD = {distSqTo:(x,z)=>roadDistSq(x,z)};
+
+  terrain = buildTerrain(); scene.add(terrain);
+  roadObj = buildRoad(spline); scene.add(roadObj);
+  buildTrees();
+  populateObstacles(spline);
+  buildHeli();
+}
+
+// ─── COLLISION ─────────────────────────────────────────────
+function checkCollisions(){
+  const px=H.pos.x, py=H.pos.y, pz=H.pos.z;
+  // ground
+  const gy = groundY(px,pz);
+  if(py-1.0 < gy){ return 'terrain'; }
+  // obstacles — simple cylinder / sphere checks
+  for(let i=0;i<OBSTACLES.length;i++){
+    const o=OBSTACLES[i];
+    const dx=px-o.pos.x, dz=pz-o.pos.z;
+    const dh=Math.sqrt(dx*dx+dz*dz);
+    if(dh > 120) continue;
+    if(o.kind==='pylon'||o.kind==='arch'||o.kind==='bldg'){
+      if(dh < o.r+1.5 && py > o.hitBot && py < o.hitTop){
+        return o.kind;
+      }
+    } else if(o.kind==='balloon'){
+      const dy=py-o.pos.y;
+      if(dh*dh+dy*dy < (o.r+1.2)*(o.r+1.2)){
+        return 'balloon';
+      }
+    } else if(o.kind==='cable'){
+      // point-to-segment distance
+      const ax=o.a.x, ay=o.a.y, az=o.a.z, bx=o.b.x, by=o.b.y, bz=o.b.z;
+      const vx=bx-ax, vy=by-ay, vz=bz-az;
+      const wx=px-ax, wy=py-ay, wz=pz-az;
+      const vd=vx*vx+vy*vy+vz*vz;
+      let t=(wx*vx+wy*vy+wz*vz)/vd; t=Math.max(0,Math.min(1,t));
+      const cx=ax+vx*t, cy=ay+vy*t, cz=az+vz*t;
+      const dx2=px-cx, dy2=py-cy, dz2=pz-cz;
+      if(dx2*dx2+dy2*dy2+dz2*dz2 < 1.6*1.6) return 'cable';
+    }
+  }
+  return null;
+}
+
+// ─── MAIN LOOP ─────────────────────────────────────────────
+let DIST=0;
+let MULT=1.0;
+const forwardTmp=new THREE.Vector3();
+const upTmp=new THREE.Vector3();
+const rightTmp=new THREE.Vector3();
+const eTmp=new THREE.Euler();
+const qTmp=new THREE.Quaternion();
+const qRot=new THREE.Quaternion();
+
+function readInput(){
+  if(STATE.ctl==='desktop'){
+    // Mouse-look drives pitch (Y delta) and yaw (X delta); keyboard adds roll + pitch trim + throttle.
+    const mouseP = MOUSE.dy; // vertical mouse delta → pitch (inverted: push forward → pitch down)
+    const mouseY = MOUSE.dx; // horizontal mouse delta → yaw
+    MOUSE.dx = MOUSE.dy = 0; // consume
+    const pitchTrim = (KEYS['KeyW']?1:0) - (KEYS['KeyS']?1:0);
+    IN.pitch = Math.max(-1, Math.min(1, -mouseP*1.6 + pitchTrim*0.6));
+    IN.roll  = (KEYS['KeyD']?1:0) - (KEYS['KeyA']?1:0);
+    IN.yaw   = Math.max(-1, Math.min(1, mouseY*1.4 + ((KEYS['KeyE']?1:0) - (KEYS['KeyQ']?1:0))));
+    IN.thr   = (KEYS['ShiftLeft']||KEYS['ShiftRight']?1:0) - (KEYS['ControlLeft']||KEYS['ControlRight']?1:0);
+    IN.boost = KEYS['Space']?1:0;
+  } else {
+    // touch — left: pitch=-ly (pull back = negative ly → pitch up), roll=lx
+    IN.pitch = -TOUCH.ly;
+    IN.roll  =  TOUCH.lx;
+    IN.yaw   =  TOUCH.rx;
+    IN.thr   = -TOUCH.ry;
+    IN.boost = TOUCH.boost?1:0;
+  }
+}
+
+function step(dt){
+  if(!H.alive) return;
+  readInput();
+
+  // smooth angular rates
+  const targetPitch = IN.pitch * 0.9;
+  const targetRoll  = IN.roll  * 1.2;
+  const targetYaw   = IN.yaw   * 0.8;
+  H.ang.x += (targetPitch - H.ang.x)*Math.min(1,dt*4.0);
+  H.ang.z += (-targetRoll - H.ang.z)*Math.min(1,dt*4.0);
+  H.ang.y += (-targetYaw  - H.ang.y)*Math.min(1,dt*4.0);
+
+  // integrate rotation: body-space angular velocity
+  eTmp.set(H.ang.x*dt, H.ang.y*dt, H.ang.z*dt, 'YXZ');
+  qRot.setFromEuler(eTmp);
+  H.quat.multiply(qRot);
+  // roll-induced yaw: bank → turn
+  const rollE=new THREE.Euler().setFromQuaternion(H.quat,'YXZ');
+  const rollAmt=rollE.z; // current roll
+  qRot.setFromEuler(new THREE.Euler(0, -rollAmt*0.7*dt, 0, 'YXZ'));
+  H.quat.premultiply(qRot);
+  H.quat.normalize();
+
+  // throttle control
+  H.throttle += IN.thr * dt * 0.6;
+  H.throttle = Math.max(0, Math.min(1.4, H.throttle));
+  H.boost += (IN.boost? 1 : -2) * dt;
+  H.boost = Math.max(0, Math.min(1, H.boost));
+
+  // forces
+  forwardTmp.set(0,0,-1).applyQuaternion(H.quat);
+  upTmp.set(0,1,0).applyQuaternion(H.quat);
+  rightTmp.set(1,0,0).applyQuaternion(H.quat);
+
+  // thrust along -local-Z (forward) from pitch (nose-down pushes forward)
+  const eul = new THREE.Euler().setFromQuaternion(H.quat, 'YXZ');
+  const pitch = eul.x;
+  const boostF = 1 + H.boost*0.6;
+  const fwdAccel = Math.sin(-pitch) * 34 * boostF;
+  H.vel.addScaledVector(forwardTmp, fwdAccel*dt);
+  // lift from throttle along local up
+  const lift = (H.throttle*22 - 9.8 + H.boost*8) ;
+  H.vel.addScaledVector(upTmp, lift*dt);
+  // gravity
+  H.vel.y -= 9.8*dt;
+  // drag
+  const drag = 0.38;
+  H.vel.multiplyScalar(1 - drag*dt);
+  // sideward damping
+  const sideways = rightTmp.clone().multiplyScalar(H.vel.dot(rightTmp));
+  H.vel.addScaledVector(sideways, -1.5*dt);
+
+  // speed cap
+  if(H.vel.length()>95){ H.vel.setLength(95); }
+
+  H.pos.addScaledVector(H.vel, dt);
+
+  // clamp just above terrain if slightly below (soft)
+  const gy=groundY(H.pos.x,H.pos.z);
+  if(H.pos.y < gy+1.2){
+    // grace: touchy land → crash
+    if(H.vel.y < -6 || H.pos.y < gy+0.2){
+      H.alive=false; gameOver('TERRAIN');
+      return;
+    } else {
+      H.pos.y = gy+1.2; H.vel.y=Math.max(H.vel.y,0);
+    }
+  }
+
+  // collisions
+  const hit=checkCollisions();
+  if(hit){
+    H.alive=false; gameOver(hit.toUpperCase());
+    return;
+  }
+
+  // rotor spin visual
+  if(mainRotor){
+    const rpm = 35 + H.throttle*35 + H.boost*15;
+    mainRotor.rotation.y += rpm*dt;
+    if(mainRotor.userData.blades){
+      mainRotor.userData.blades.forEach(b=>{b.rotation.y += rpm*dt;});
+    }
+  }
+  if(tailRotor){ tailRotor.rotation.x += 40*dt; }
+
+  // move helicopter group to follow the camera position (purely for rotor/tail visual)
+  if(heli){
+    heli.position.copy(H.pos);
+    heli.quaternion.copy(H.quat);
+  }
+
+  // camera — cockpit: at pilot eye, looking along forward
+  camera.position.copy(H.pos).addScaledVector(upTmp, 0.4).addScaledVector(forwardTmp, 0.3);
+  // add a touch of sway based on roll / speed for immersion
+  const sway = rollAmt*0.08 + (Math.sin(performance.now()*0.008)*0.01);
+  const camEul = new THREE.Euler().setFromQuaternion(H.quat,'YXZ');
+  camEul.z += sway;
+  camera.quaternion.setFromEuler(camEul);
+
+  // balloon drift & bob
+  for(let i=0;i<OBSTACLES.length;i++){
+    const o=OBSTACLES[i];
+    if(o.kind==='balloon'){
+      o.mesh.position.x += o.mesh.userData.drift*dt;
+      o.mesh.position.y += Math.sin(performance.now()*0.0009 + o.mesh.userData.bobPhase)*dt*0.6;
+      o.pos.copy(o.mesh.position);
+    }
+  }
+
+  // distance / score (along-road projection approximated by heli forward dist)
+  const spd = H.vel.length();
+  DIST += spd*dt;
+  // multiplier: higher when close to the road
+  const d2 = roadDistSq(H.pos.x, H.pos.z);
+  MULT = 1.0 + Math.max(0, (25*25 - d2)/(25*25)) * 2.0;
+
+  // audio rotor sound
+  if(rotorGain && AC){
+    const target = 0.05 + H.throttle*0.18 + H.boost*0.1;
+    rotorGain.gain.setTargetAtTime(target, AC.currentTime, 0.08);
+    const targetF = 80 + H.throttle*100 + H.boost*40;
+    rotorOsc.frequency.setTargetAtTime(targetF, AC.currentTime, 0.1);
+  }
+}
+
+// ─── HUD 2D (cockpit frame + instruments) ───────────────────
+function drawCockpitAndHUD(){
+  const w=window.innerWidth, h=window.innerHeight;
+  hudCtx.clearRect(0,0,w,h);
+  // Cockpit frame — dark silhouettes at top/sides/bottom
+  hudCtx.save();
+  hudCtx.fillStyle='rgba(8,12,16,0.95)';
+  // top canopy arc
+  hudCtx.beginPath();
+  hudCtx.moveTo(0,0);
+  hudCtx.lineTo(w,0);
+  hudCtx.lineTo(w, h*0.14);
+  hudCtx.quadraticCurveTo(w*0.5, h*0.06, 0, h*0.14);
+  hudCtx.closePath();
+  hudCtx.fill();
+  // bottom dash
+  hudCtx.beginPath();
+  hudCtx.moveTo(0, h);
+  hudCtx.lineTo(w, h);
+  hudCtx.lineTo(w, h*0.80);
+  hudCtx.quadraticCurveTo(w*0.5, h*0.68, 0, h*0.80);
+  hudCtx.closePath();
+  hudCtx.fill();
+  // left frame pillar
+  hudCtx.fillStyle='rgba(10,14,18,0.85)';
+  hudCtx.beginPath();
+  hudCtx.moveTo(0,0); hudCtx.lineTo(w*0.08,0);
+  hudCtx.lineTo(w*0.04, h*0.5);
+  hudCtx.lineTo(w*0.08, h);
+  hudCtx.lineTo(0, h);
+  hudCtx.closePath(); hudCtx.fill();
+  hudCtx.beginPath();
+  hudCtx.moveTo(w,0); hudCtx.lineTo(w*0.92,0);
+  hudCtx.lineTo(w*0.96, h*0.5);
+  hudCtx.lineTo(w*0.92, h);
+  hudCtx.lineTo(w, h);
+  hudCtx.closePath(); hudCtx.fill();
+  // canopy frame highlight lines
+  hudCtx.strokeStyle='rgba(120,160,180,0.25)';
+  hudCtx.lineWidth=2;
+  hudCtx.beginPath();
+  hudCtx.moveTo(w*0.08,0); hudCtx.quadraticCurveTo(w*0.5, h*0.05, w*0.92, 0);
+  hudCtx.stroke();
+  hudCtx.beginPath();
+  hudCtx.moveTo(w*0.08, h); hudCtx.quadraticCurveTo(w*0.5, h*0.72, w*0.92, h);
+  hudCtx.stroke();
+  // reticle
+  hudCtx.strokeStyle='rgba(120,255,160,0.75)';
+  hudCtx.lineWidth=1.5;
+  const cx=w/2, cy=h*0.5;
+  hudCtx.beginPath();
+  hudCtx.arc(cx,cy,10,0,Math.PI*2);
+  hudCtx.moveTo(cx-22,cy); hudCtx.lineTo(cx-10,cy);
+  hudCtx.moveTo(cx+10,cy); hudCtx.lineTo(cx+22,cy);
+  hudCtx.moveTo(cx,cy-22); hudCtx.lineTo(cx,cy-10);
+  hudCtx.moveTo(cx,cy+10); hudCtx.lineTo(cx,cy+22);
+  hudCtx.stroke();
+  hudCtx.restore();
+
+  // Instrument panel — drawn in cockpit lower area
+  const ix = w*0.5, iy = h*0.87;
+  const eul = new THREE.Euler().setFromQuaternion(H.quat,'YXZ');
+  const pitchDeg = THREE.MathUtils.radToDeg(eul.x);
+  const rollDeg = THREE.MathUtils.radToDeg(eul.z);
+  const yawDeg = (THREE.MathUtils.radToDeg(eul.y)+720)%360;
+  const spd = H.vel.length();
+  const alt = H.pos.y - groundY(H.pos.x,H.pos.z);
+
+  // Attitude indicator (centre)
+  drawADI(ix, iy, 62, pitchDeg, rollDeg);
+  // Airspeed tape (left)
+  drawTape(w*0.22, iy, 140, 60, spd, 0, 100, 'KIAS', Math.round(spd));
+  // Altitude tape (right)
+  drawTape(w*0.78, iy, 140, 60, Math.max(0,alt), 0, 300, 'AGL', Math.round(alt));
+  // Heading tape (top centre below canopy)
+  drawHeading(w*0.5, h*0.19, 280, yawDeg);
+
+  // throttle + boost bar
+  drawThrottle(w*0.13, iy, H.throttle, H.boost);
+
+  // touch stick indicators
+  if(STATE.ctl==='touch' && STATE.started && !STATE.over){
+    if(TOUCH.lActive){ drawStick(TOUCH.lcx, TOUCH.lcy, TOUCH.lx, TOUCH.ly); }
+    else { drawStickHint(w*0.25, h*0.5, 'PITCH / ROLL'); }
+    if(TOUCH.rActive){ drawStick(TOUCH.rcx, TOUCH.rcy, TOUCH.rx, TOUCH.ry); }
+    else { drawStickHint(w*0.75, h*0.5, 'YAW / THROTTLE'); }
+  }
+}
+function drawADI(cx,cy,r,pitchDeg,rollDeg){
+  hudCtx.save();
+  hudCtx.translate(cx,cy);
+  hudCtx.rotate(-rollDeg*Math.PI/180);
+  // clip circle
+  hudCtx.beginPath(); hudCtx.arc(0,0,r,0,Math.PI*2); hudCtx.clip();
+  // sky/ground
+  const pitchOff = pitchDeg*1.2;
+  hudCtx.fillStyle='#1a3c6a'; hudCtx.fillRect(-r, -r*2+pitchOff, r*2, r*2);
+  hudCtx.fillStyle='#5a3a1a'; hudCtx.fillRect(-r,  pitchOff, r*2, r*2);
+  // horizon
+  hudCtx.strokeStyle='#fff'; hudCtx.lineWidth=2;
+  hudCtx.beginPath(); hudCtx.moveTo(-r,pitchOff); hudCtx.lineTo(r,pitchOff); hudCtx.stroke();
+  // pitch ladder
+  hudCtx.strokeStyle='rgba(255,255,255,0.6)'; hudCtx.lineWidth=1;
+  hudCtx.font='8px "Share Tech Mono"';
+  hudCtx.fillStyle='#fff';
+  for(let p=-30;p<=30;p+=10){ if(p===0)continue;
+    const y = pitchOff - p*1.2;
+    hudCtx.beginPath(); hudCtx.moveTo(-18,y); hudCtx.lineTo(18,y); hudCtx.stroke();
+  }
+  hudCtx.restore();
+  // border + pointer
+  hudCtx.save();
+  hudCtx.translate(cx,cy);
+  hudCtx.strokeStyle='#aaffcc'; hudCtx.lineWidth=2;
+  hudCtx.beginPath(); hudCtx.arc(0,0,r,0,Math.PI*2); hudCtx.stroke();
+  // aircraft symbol (fixed)
+  hudCtx.strokeStyle='#ffdd00'; hudCtx.lineWidth=2.5;
+  hudCtx.beginPath();
+  hudCtx.moveTo(-r*0.5,0); hudCtx.lineTo(-r*0.15,0);
+  hudCtx.moveTo( r*0.15,0); hudCtx.lineTo(r*0.5,0);
+  hudCtx.moveTo(0,0); hudCtx.arc(0,0,3,0,Math.PI*2);
+  hudCtx.stroke();
+  hudCtx.restore();
+}
+function drawTape(cx,cy,w,h,val,min,max,label,bigVal){
+  hudCtx.save();
+  hudCtx.translate(cx,cy);
+  hudCtx.fillStyle='rgba(0,10,5,0.55)';
+  hudCtx.fillRect(-w/2,-h/2,w,h);
+  hudCtx.strokeStyle='rgba(120,255,160,0.5)';
+  hudCtx.strokeRect(-w/2,-h/2,w,h);
+  hudCtx.fillStyle='#8fffaa';
+  hudCtx.font='10px "Share Tech Mono"';
+  hudCtx.textAlign='left';
+  hudCtx.fillText(label, -w/2+6, -h/2+12);
+  hudCtx.font='bold 26px "Orbitron"';
+  hudCtx.textAlign='center'; hudCtx.fillStyle='#ddffe8';
+  hudCtx.fillText(String(bigVal), 0, 10);
+  // mini tape scale
+  const cur=val;
+  const step=10;
+  hudCtx.font='8px "Share Tech Mono"';
+  hudCtx.fillStyle='#8fffaa';
+  hudCtx.textAlign='right';
+  const top = Math.ceil((cur-20)/step)*step;
+  for(let v=top; v<=cur+20; v+=step){
+    const y = (cur - v)*1.2 + 20;
+    if(y<-h/2+14||y>h/2-4) continue;
+    hudCtx.fillText(v, w/2-6, y);
+    hudCtx.fillRect(w/2-14, y-1, 6, 1);
+  }
+  hudCtx.restore();
+}
+function drawHeading(cx,cy,w,deg){
+  hudCtx.save();
+  hudCtx.translate(cx,cy);
+  hudCtx.fillStyle='rgba(0,10,5,0.5)';
+  hudCtx.fillRect(-w/2,-14,w,28);
+  hudCtx.strokeStyle='rgba(120,255,160,0.5)';
+  hudCtx.strokeRect(-w/2,-14,w,28);
+  hudCtx.font='11px "Share Tech Mono"';
+  hudCtx.fillStyle='#8fffaa';
+  hudCtx.textAlign='center';
+  // labels every 30 deg
+  for(let v=-60;v<=60;v+=10){
+    const d = Math.round(deg/10)*10 + v;
+    const x = v*1.6;
+    hudCtx.fillRect(x, -14, 1, v%30===0?10:5);
+    if(v%30===0){
+      const d2 = (d+720)%360;
+      let label;
+      if(d2===0)label='N'; else if(d2===90)label='E'; else if(d2===180)label='S'; else if(d2===270)label='W';
+      else label=String(d2/10|0).padStart(2,'0');
+      hudCtx.fillText(label, x, 10);
+    }
+  }
+  // centre
+  hudCtx.strokeStyle='#ffdd00'; hudCtx.lineWidth=2;
+  hudCtx.beginPath(); hudCtx.moveTo(0,-18); hudCtx.lineTo(0,14); hudCtx.stroke();
+  hudCtx.restore();
+}
+function drawThrottle(cx,cy,thr,boost){
+  hudCtx.save();
+  hudCtx.translate(cx,cy);
+  hudCtx.fillStyle='rgba(0,10,5,0.55)';
+  hudCtx.fillRect(-10,-40,20,80);
+  hudCtx.strokeStyle='rgba(120,255,160,0.5)';
+  hudCtx.strokeRect(-10,-40,20,80);
+  const fill = Math.max(0,Math.min(1,thr/1.4));
+  hudCtx.fillStyle='#4fdd77';
+  hudCtx.fillRect(-8, 40 - 78*fill, 16, 78*fill);
+  if(boost>0.02){
+    hudCtx.fillStyle='rgba(255,160,60,'+ boost.toFixed(2)+')';
+    hudCtx.fillRect(-8, 40 - 78*(fill+boost*0.15), 16, 4);
+  }
+  hudCtx.fillStyle='#8fffaa';
+  hudCtx.font='8px "Share Tech Mono"';
+  hudCtx.textAlign='center';
+  hudCtx.fillText('THR', 0, -44);
+  hudCtx.restore();
+}
+function drawStick(cx,cy,x,y){
+  hudCtx.save();
+  hudCtx.strokeStyle='rgba(180,230,255,0.5)';
+  hudCtx.fillStyle='rgba(30,60,90,0.25)';
+  hudCtx.lineWidth=2;
+  hudCtx.beginPath(); hudCtx.arc(cx,cy,STICK_R,0,Math.PI*2); hudCtx.fill(); hudCtx.stroke();
+  hudCtx.fillStyle='rgba(180,230,255,0.8)';
+  hudCtx.beginPath(); hudCtx.arc(cx+x*STICK_R, cy+y*STICK_R, 22, 0, Math.PI*2); hudCtx.fill();
+  hudCtx.restore();
+}
+function drawStickHint(cx,cy,label){
+  hudCtx.save();
+  hudCtx.strokeStyle='rgba(180,230,255,0.2)';
+  hudCtx.lineWidth=1.5;
+  hudCtx.beginPath(); hudCtx.arc(cx,cy,STICK_R,0,Math.PI*2); hudCtx.stroke();
+  hudCtx.fillStyle='rgba(180,230,255,0.35)';
+  hudCtx.font='11px "Orbitron"';
+  hudCtx.textAlign='center';
+  hudCtx.fillText(label, cx, cy+STICK_R+18);
+  hudCtx.restore();
+}
+
+// ─── GAME FLOW ─────────────────────────────────────────────
+function startGame(){
+  if(!WEBGL_OK){ return; }
+  unlockAudio();
+  STATE.started=true; STATE.over=false;
+  document.getElementById('overlay').style.display='none';
+  document.getElementById('hud').style.display='block';
+  document.getElementById('menuBtn').style.display='block';
+  if(STATE.ctl==='touch'){ document.getElementById('boostBtn').style.display='block'; }
+  document.getElementById('instr-panel').textContent =
+    STATE.ctl==='touch' ? 'L: PITCH / ROLL   R: YAW / THROTTLE   BOOST button bottom-right'
+                        : 'MOUSE look  A/D roll  W/S pitch trim  Shift/Ctrl thr  Space boost  (click to capture mouse)';
+
+  DIST=0; MULT=1.0;
+  buildWorld();
+  resetHeli();
+  nextFlash = 3 + Math.random()*4;
+  if(STATE.ctl==='desktop'){ tryLockPointer(); }
+}
+function restartGame(){
+  document.getElementById('gameover').style.display='none';
+  document.getElementById('hud').style.display='block';
+  if(STATE.ctl==='touch'){ document.getElementById('boostBtn').style.display='block'; }
+  STATE.over=false; STATE.started=true;
+  DIST=0; MULT=1.0;
+  buildWorld();
+  resetHeli();
+  if(STATE.ctl==='desktop'){ tryLockPointer(); }
+}
+function goMenu(){
+  STATE.started=false; STATE.over=false;
+  document.getElementById('gameover').style.display='none';
+  document.getElementById('hud').style.display='none';
+  document.getElementById('menuBtn').style.display='none';
+  document.getElementById('boostBtn').style.display='none';
+  document.getElementById('overlay').style.display='flex';
+  hudCtx.clearRect(0,0,window.innerWidth,window.innerHeight);
+  if(document.pointerLockElement && document.exitPointerLock){ document.exitPointerLock(); }
+}
+const QUIPS={
+  TERRAIN:'Nap-of-the-earth was a bit too literal.',
+  PYLON:'The tower won the argument.',
+  ARCH:'That arch wasn\'t a shortcut.',
+  BLDG:'Property damage insurance: void.',
+  BALLOON:'Somebody is very sad right now.',
+  CABLE:'Invisible cables strike again.',
+};
+function gameOver(cause){
+  STATE.over=true;
+  crashBoom();
+  const t=(performance.now()/1000 - H.startT);
+  document.getElementById('goquip').textContent = QUIPS[cause] || 'Crashed.';
+  document.getElementById('gostats').innerHTML =
+    'CAUSE: <span>'+cause+'</span><br>'+
+    'DIST: <span>'+Math.round(DIST)+' m</span><br>'+
+    'TIME: <span>'+t.toFixed(1)+' s</span><br>'+
+    'BEST MULT: <span>x'+MULT.toFixed(2)+'</span>';
+  document.getElementById('gameover').style.display='flex';
+  document.getElementById('hud').style.display='none';
+  document.getElementById('boostBtn').style.display='none';
+  if(rotorGain && AC){ rotorGain.gain.setTargetAtTime(0, AC.currentTime, 0.2); }
+  if(document.pointerLockElement && document.exitPointerLock){ document.exitPointerLock(); }
+}
+
+// ─── RENDER LOOP ───────────────────────────────────────────
+function loop(){
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, clock.getDelta());
+  if(STATE.started && !STATE.over){
+    step(dt);
+    tickStorm(dt);
+    // cull far obstacles (opacity)
+    // left as-is; fog handles depth cueing
+  }
+  if(STATE.started){
+    document.getElementById('distv').textContent = Math.round(DIST);
+    document.getElementById('multv').textContent = MULT.toFixed(2);
+    document.getElementById('timev').textContent = Math.max(0,(performance.now()/1000 - H.startT)).toFixed(1);
+  }
+  if(WEBGL_OK){ renderer.render(scene, camera); }
+  if(STATE.started){ drawCockpitAndHUD(); }
+}
+loop();
+
+// ─── IOS AUDIO UNLOCK ON FIRST TAP ────────────────────────
+document.addEventListener('pointerdown', ()=>{
+  if(!AC) unlockAudio();
+  if(AC && AC.state==='suspended'){ AC.resume(); }
+}, {once:false});
+
+</script>
+</body>
+</html>
