@@ -204,9 +204,9 @@ function updateHint(){
   const el=document.getElementById('hintText');
   const auto = (STATE.ctl===AUTO_CTL) ? ' &nbsp;<span style="color:#7ee0ff;">(auto-detected for your device)</span>' : '';
   if(STATE.ctl==='touch'){
-    el.innerHTML='<b>LEFT STICK</b> &ndash; pitch (fwd/back) &amp; roll (L/R) &nbsp;|&nbsp; <b>RIGHT STICK</b> &ndash; yaw (L/R) &amp; throttle (up/down) &nbsp;|&nbsp; <b>BOOST</b> button bottom-right'+auto;
+    el.innerHTML='<b>STICK</b> &ndash; left/right to <b>steer</b>, up/down to <b>climb / dive</b> &nbsp;|&nbsp; <b>BOOST</b> button bottom-right. Throttle is automatic.'+auto;
   } else {
-    el.innerHTML='<b>MOUSE</b> look (yaw / pitch) &nbsp;|&nbsp; <b>A/D</b> roll &nbsp;|&nbsp; <b>W/S</b> pitch trim &nbsp;|&nbsp; <b>Shift/Ctrl</b> throttle up/down &nbsp;|&nbsp; <b>Space</b> boost &nbsp;|&nbsp; <b>Esc</b> release mouse'+auto;
+    el.innerHTML='<b>MOUSE</b> &ndash; move to <b>steer + climb/dive</b> (or <b>A/D</b> to steer, <b>W/S</b> to dive/climb) &nbsp;|&nbsp; <b>SPACE</b> boost &nbsp;|&nbsp; <b>ESC</b> release mouse. Throttle is automatic.'+auto;
   }
 }
 updateHint();
@@ -690,7 +690,8 @@ function placeBalloon(p){
 
 function populateObstacles(spline){
   const diff = STATE.diff;
-  const densityMul = diff==='recon'?0.55 : diff==='hot'?1.6 : 1.0;
+  // Arcade overhaul: noticeably more stuff to weave through at every difficulty
+  const densityMul = diff==='recon'?0.9 : diff==='hot'?2.4 : 1.5;
   const len = spline.getLength();
   // pylons — pairs so cables can span them
   let prevPylon=null;
@@ -796,6 +797,10 @@ const H = {
   boost:0,
   alive:true,
   startT:0,
+  // arcade: shield absorbs hits; short invuln window after hit
+  shield:3, maxShield:3, invuln:0,
+  // camera shake accumulator
+  shake:0,
 };
 // Input state: pitchIn(-1..1 forward-), rollIn(-1..1 right+), yawIn(-1..1 right+), throttleIn(-1..1 up+), boost(0/1)
 const IN = {pitch:0, roll:0, yaw:0, thr:0, boost:0};
@@ -816,6 +821,7 @@ function resetHeli(){
   }
   H.ang.set(0,0,0);
   H.throttle=0.6; H.boost=0; H.alive=true;
+  H.shield=H.maxShield; H.invuln=0; H.shake=0;
   H.startT = performance.now()/1000;
   H.bestT = 0;
 }
@@ -1029,23 +1035,26 @@ const qTmp=new THREE.Quaternion();
 const qRot=new THREE.Quaternion();
 
 function readInput(){
+  // Arcade controls: single axis of steer (roll→turn) + climb/dive pitch.
+  // Yaw and throttle are automatic. Boost is held.
   if(STATE.ctl==='desktop'){
-    // Mouse-look drives pitch (Y delta) and yaw (X delta); keyboard adds roll + pitch trim + throttle.
-    const mouseP = MOUSE.dy; // vertical mouse delta → pitch (inverted: push forward → pitch down)
-    const mouseY = MOUSE.dx; // horizontal mouse delta → yaw
-    MOUSE.dx = MOUSE.dy = 0; // consume
-    const pitchTrim = (KEYS['KeyW']?1:0) - (KEYS['KeyS']?1:0);
-    IN.pitch = Math.max(-1, Math.min(1, -mouseP*1.6 + pitchTrim*0.6));
-    IN.roll  = (KEYS['KeyD']?1:0) - (KEYS['KeyA']?1:0);
-    IN.yaw   = Math.max(-1, Math.min(1, mouseY*1.4 + ((KEYS['KeyE']?1:0) - (KEYS['KeyQ']?1:0))));
-    IN.thr   = (KEYS['ShiftLeft']||KEYS['ShiftRight']?1:0) - (KEYS['ControlLeft']||KEYS['ControlRight']?1:0);
+    // Mouse drives steer (x) and climb/dive (y). Keyboard is a redundant override.
+    const mY = MOUSE.dx;  // mouse-x → steer / roll
+    const mP = MOUSE.dy;  // mouse-y → pitch (up = climb)
+    MOUSE.dx = MOUSE.dy = 0;
+    const kRoll = (KEYS['KeyD']?1:0) - (KEYS['KeyA']?1:0);
+    const kPitch = (KEYS['KeyS']?1:0) - (KEYS['KeyW']?1:0); // W = nose down (dive/forward feel)
+    IN.roll  = Math.max(-1, Math.min(1, mY*2.2 + kRoll));
+    IN.pitch = Math.max(-1, Math.min(1, -mP*2.0 + kPitch)); // +pitch = climb
+    IN.yaw   = 0;
+    IN.thr   = 0;
     IN.boost = KEYS['Space']?1:0;
   } else {
-    // touch — left: pitch=-ly (pull back = negative ly → pitch up), roll=lx
-    IN.pitch = -TOUCH.ly;
+    // Touch — one stick only: X = steer, Y = climb/dive. Right stick ignored.
     IN.roll  =  TOUCH.lx;
-    IN.yaw   =  TOUCH.rx;
-    IN.thr   = -TOUCH.ry;
+    IN.pitch = -TOUCH.ly;  // pull back = climb
+    IN.yaw   = 0;
+    IN.thr   = 0;
     IN.boost = TOUCH.boost?1:0;
   }
 }
@@ -1054,87 +1063,89 @@ function step(dt){
   if(!H.alive) return;
   readInput();
 
-  // smooth angular rates
-  const targetPitch = IN.pitch * 0.9;
-  const targetRoll  = IN.roll  * 1.2;
-  const targetYaw   = IN.yaw   * 0.8;
-  H.ang.x += (targetPitch - H.ang.x)*Math.min(1,dt*4.0);
-  H.ang.z += (-targetRoll - H.ang.z)*Math.min(1,dt*4.0);
-  H.ang.y += (-targetYaw  - H.ang.y)*Math.min(1,dt*4.0);
+  // ── ARCADE FLIGHT MODEL ─────────────────────────────────────
+  // Throttle is automatic. Boost is held. Pitch = climb/dive.
+  // Roll is responsive and drives yaw (bank-to-turn). Auto-level
+  // when no input. No stall, no gravity struggle — just fly.
 
-  // integrate rotation: body-space angular velocity
-  eTmp.set(H.ang.x*dt, H.ang.y*dt, H.ang.z*dt, 'YXZ');
-  qRot.setFromEuler(eTmp);
-  H.quat.multiply(qRot);
-  // roll-induced yaw: bank → turn
-  const rollE=new THREE.Euler().setFromQuaternion(H.quat,'YXZ');
-  const rollAmt=rollE.z; // current roll
-  qRot.setFromEuler(new THREE.Euler(0, -rollAmt*0.7*dt, 0, 'YXZ'));
-  H.quat.premultiply(qRot);
-  H.quat.normalize();
-
-  // throttle control
-  H.throttle += IN.thr * dt * 0.6;
-  H.throttle = Math.max(0, Math.min(1.4, H.throttle));
-  H.boost += (IN.boost? 1 : -2) * dt;
+  // Boost ramps in fast, decays faster
+  H.boost += (IN.boost? 2.2 : -2.5) * dt;
   H.boost = Math.max(0, Math.min(1, H.boost));
+  const boostF = 1 + H.boost*0.55;
 
-  // forces
+  // Desired roll / pitch from input, with auto-level pulling toward 0
+  const targetRoll  = IN.roll  *  0.75; // ~43° max bank
+  const targetPitch = IN.pitch *  0.45; // gentle climb/dive
+  // Smooth, snappy response
+  const rollLerp  = 1 - Math.exp(-dt*6.0);
+  const pitchLerp = 1 - Math.exp(-dt*5.0);
+  H.ang.z += ((-targetRoll)  - H.ang.z) * rollLerp;
+  H.ang.x += (( targetPitch) - H.ang.x) * pitchLerp;
+  // Auto-level: if no input, pull toward 0
+  if(Math.abs(IN.roll)<0.05)  H.ang.z *= (1 - Math.min(1,dt*1.8));
+  if(Math.abs(IN.pitch)<0.05) H.ang.x *= (1 - Math.min(1,dt*1.5));
+
+  // Rebuild orientation from heading + current roll/pitch
+  // Extract current heading (yaw)
+  const cur = new THREE.Euler().setFromQuaternion(H.quat,'YXZ');
+  let yaw = cur.y;
+  // Bank-to-turn: bank angle yields yaw rate
+  const turnRate = -H.ang.z * 1.6; // rad/s
+  yaw += turnRate * dt;
+  // Recompose
+  H.quat.setFromEuler(new THREE.Euler(H.ang.x, yaw, H.ang.z, 'YXZ'));
+
+  // Body axes
   forwardTmp.set(0,0,-1).applyQuaternion(H.quat);
   upTmp.set(0,1,0).applyQuaternion(H.quat);
   rightTmp.set(1,0,0).applyQuaternion(H.quat);
 
-  // thrust along -local-Z (forward) from pitch (nose-down pushes forward)
-  const eul = new THREE.Euler().setFromQuaternion(H.quat, 'YXZ');
-  const pitch = eul.x;
-  const boostF = 1 + H.boost*0.6;
-  const fwdAccel = Math.sin(-pitch) * 34 * boostF;
-  H.vel.addScaledVector(forwardTmp, fwdAccel*dt);
-  // lift from throttle along local up
-  const lift = (H.throttle*22 - 9.8 + H.boost*8) ;
-  H.vel.addScaledVector(upTmp, lift*dt);
-  // gravity
-  H.vel.y -= 9.8*dt;
-  // drag
-  const drag = 0.38;
-  H.vel.multiplyScalar(1 - drag*dt);
-  // sideward damping
-  const sideways = rightTmp.clone().multiplyScalar(H.vel.dot(rightTmp));
-  H.vel.addScaledVector(sideways, -1.5*dt);
+  // Cruise speed with difficulty + boost scaling
+  const diffSpd = STATE.diff==='recon' ? 38 : STATE.diff==='hot' ? 58 : 48;
+  const cruise  = diffSpd * boostF;
+  const targetVel = forwardTmp.clone().multiplyScalar(cruise);
+  // Climb/dive overlay from pitch
+  const climb = H.ang.x * 14.0;          // m/s
+  targetVel.y += climb;
 
-  // speed cap
-  if(H.vel.length()>95){ H.vel.setLength(95); }
+  // Ease current velocity toward target — arcade: no inertia struggle
+  const accel = 1 - Math.exp(-dt*2.2);
+  H.vel.lerp(targetVel, accel);
 
+  // Integrate position
   H.pos.addScaledVector(H.vel, dt);
 
-  // clamp just above terrain if slightly below (soft)
+  // Keep aircraft clear of terrain (soft arcade floor, not instant death)
   const gy=groundY(H.pos.x,H.pos.z);
-  if(H.pos.y < gy+1.2){
-    // grace: touchy land → crash
-    if(H.vel.y < -6 || H.pos.y < gy+0.2){
-      H.alive=false; gameOver('TERRAIN');
-      return;
-    } else {
-      H.pos.y = gy+1.2; H.vel.y=Math.max(H.vel.y,0);
+  const floorY = gy + 2.5;
+  if(H.pos.y < floorY){
+    // strong impact → shield damage; mild scrape → push up
+    const vy = H.vel.y;
+    if(vy < -18 && H.invuln<=0){
+      damageShield('TERRAIN');
     }
+    H.pos.y = floorY;
+    H.vel.y = Math.max(H.vel.y, 2);
+    H.ang.x = Math.max(H.ang.x, 0.05); // nose up a touch
   }
 
-  // collisions
-  const hit=checkCollisions();
-  if(hit){
-    H.alive=false; gameOver(hit.toUpperCase());
-    return;
+  // Collisions with obstacles
+  if(H.invuln<=0){
+    const hit=checkCollisions();
+    if(hit){ damageShield(hit.toUpperCase()); }
   }
+  if(H.invuln>0) H.invuln -= dt;
 
-  // rotor spin visual
+  // rotor spin visual — tied to speed + boost (throttle is automatic now)
+  const spdNow = H.vel.length();
   if(mainRotor){
-    const rpm = 35 + H.throttle*35 + H.boost*15;
+    const rpm = 50 + spdNow*0.6 + H.boost*20;
     mainRotor.rotation.y += rpm*dt;
     if(mainRotor.userData.blades){
       mainRotor.userData.blades.forEach(b=>{b.rotation.y += rpm*dt;});
     }
   }
-  if(tailRotor){ tailRotor.rotation.x += 40*dt; }
+  if(tailRotor){ tailRotor.rotation.x += 45*dt + H.boost*10*dt; }
 
   // move helicopter group to follow the camera position (purely for rotor/tail visual)
   if(heli){
@@ -1142,12 +1153,21 @@ function step(dt){
     heli.quaternion.copy(H.quat);
   }
 
-  // camera — cockpit: at pilot eye, looking along forward
+  // ── CAMERA: cockpit view with FOV pump + shake for speed feel ──
   camera.position.copy(H.pos).addScaledVector(upTmp, 0.4).addScaledVector(forwardTmp, 0.3);
-  // add a touch of sway based on roll / speed for immersion
-  const sway = rollAmt*0.08 + (Math.sin(performance.now()*0.008)*0.01);
+  // speed feel: FOV widens with speed, more with boost
+  const baseFOV = 68;
+  const targetFOV = baseFOV + Math.min(18, spdNow*0.18) + H.boost*10;
+  camera.fov += (targetFOV - camera.fov) * Math.min(1, dt*6);
+  camera.updateProjectionMatrix();
+  // shake grows with boost; decays otherwise
+  H.shake = Math.max(0, H.shake - dt*2.5) + H.boost*dt*1.1;
+  const shk = Math.min(0.04, H.shake*0.03);
+  const rollAmt = H.ang.z;
+  const sway = rollAmt*0.10 + (Math.sin(performance.now()*0.008)*0.01);
   const camEul = new THREE.Euler().setFromQuaternion(H.quat,'YXZ');
-  camEul.z += sway;
+  camEul.z += sway + (Math.random()-0.5)*shk;
+  camEul.x += (Math.random()-0.5)*shk*0.6;
   camera.quaternion.setFromEuler(camEul);
 
   // balloon drift & bob
@@ -1161,18 +1181,38 @@ function step(dt){
   }
 
   // distance / score (along-road projection approximated by heli forward dist)
-  const spd = H.vel.length();
-  DIST += spd*dt;
-  // multiplier: higher when close to the road
+  DIST += spdNow*dt;
   const d2 = roadDistSq(H.pos.x, H.pos.z);
   MULT = 1.0 + Math.max(0, (25*25 - d2)/(25*25)) * 2.0;
 
-  // audio rotor sound
+  // audio rotor sound — driven by speed + boost
   if(rotorGain && AC){
-    const target = 0.05 + H.throttle*0.18 + H.boost*0.1;
+    const target = 0.08 + Math.min(0.18, spdNow*0.003) + H.boost*0.12;
     rotorGain.gain.setTargetAtTime(target, AC.currentTime, 0.08);
-    const targetF = 80 + H.throttle*100 + H.boost*40;
+    const targetF = 100 + Math.min(80, spdNow*1.1) + H.boost*50;
     rotorOsc.frequency.setTargetAtTime(targetF, AC.currentTime, 0.1);
+  }
+}
+
+// Shield damage on a non-fatal hit. When shield runs out, it's game over.
+function damageShield(cause){
+  if(H.invuln>0 || !H.alive) return;
+  H.shield -= 1;
+  H.invuln = 1.2;
+  H.shake += 0.8;
+  // brief red flash on the HUD
+  const f=document.getElementById('damvign'); if(f){ f.style.opacity='1'; setTimeout(()=>{f.style.opacity='0';},220); }
+  if(H.shield<=0){
+    H.alive=false; gameOver(cause);
+  } else {
+    if(AC && rotorGain){
+      const o=AC.createOscillator(); const g=AC.createGain();
+      o.type='square'; o.frequency.setValueAtTime(220, AC.currentTime);
+      o.frequency.exponentialRampToValueAtTime(80, AC.currentTime+0.2);
+      g.gain.setValueAtTime(0.25, AC.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+0.25);
+      o.connect(g); g.connect(masterGain); o.start(); o.stop(AC.currentTime+0.26);
+    }
   }
 }
 
@@ -1253,15 +1293,21 @@ function drawCockpitAndHUD(){
   // Heading tape (top centre below canopy)
   drawHeading(w*0.5, h*0.19, 280, yawDeg);
 
-  // throttle + boost bar
-  drawThrottle(w*0.13, iy, H.throttle, H.boost);
+  // shield pips + boost bar
+  drawShieldAndBoost(w*0.13, iy, H.shield, H.maxShield, H.boost);
+  // radial speed streaks — reinforce sense of motion
+  drawSpeedStreaks(spd, H.boost);
+  // invuln flash (short periodic alpha wash after a hit)
+  if(H.invuln>0){
+    const a = 0.18*(0.5+0.5*Math.sin(performance.now()*0.035));
+    hudCtx.fillStyle='rgba(255,120,120,'+a.toFixed(2)+')';
+    hudCtx.fillRect(0,0,w,h);
+  }
 
-  // touch stick indicators
+  // touch stick indicator (single stick — steer + climb/dive)
   if(STATE.ctl==='touch' && STATE.started && !STATE.over){
     if(TOUCH.lActive){ drawStick(TOUCH.lcx, TOUCH.lcy, TOUCH.lx, TOUCH.ly); }
-    else { drawStickHint(w*0.25, h*0.5, 'PITCH / ROLL'); }
-    if(TOUCH.rActive){ drawStick(TOUCH.rcx, TOUCH.rcy, TOUCH.rx, TOUCH.ry); }
-    else { drawStickHint(w*0.75, h*0.5, 'YAW / THROTTLE'); }
+    else { drawStickHint(w*0.25, h*0.5, 'STEER + CLIMB'); }
   }
 }
 function drawADI(cx,cy,r,pitchDeg,rollDeg){
@@ -1357,24 +1403,65 @@ function drawHeading(cx,cy,w,deg){
   hudCtx.beginPath(); hudCtx.moveTo(0,-18); hudCtx.lineTo(0,14); hudCtx.stroke();
   hudCtx.restore();
 }
-function drawThrottle(cx,cy,thr,boost){
+function drawShieldAndBoost(cx,cy,shield,maxShield,boost){
   hudCtx.save();
   hudCtx.translate(cx,cy);
-  hudCtx.fillStyle='rgba(0,10,5,0.55)';
-  hudCtx.fillRect(-10,-40,20,80);
-  hudCtx.strokeStyle='rgba(120,255,160,0.5)';
-  hudCtx.strokeRect(-10,-40,20,80);
-  const fill = Math.max(0,Math.min(1,thr/1.4));
-  hudCtx.fillStyle='#4fdd77';
-  hudCtx.fillRect(-8, 40 - 78*fill, 16, 78*fill);
-  if(boost>0.02){
-    hudCtx.fillStyle='rgba(255,160,60,'+ boost.toFixed(2)+')';
-    hudCtx.fillRect(-8, 40 - 78*(fill+boost*0.15), 16, 4);
-  }
+  // SHIELD pips (vertical stack)
   hudCtx.fillStyle='#8fffaa';
-  hudCtx.font='8px "Share Tech Mono"';
+  hudCtx.font='9px "Share Tech Mono"';
   hudCtx.textAlign='center';
-  hudCtx.fillText('THR', 0, -44);
+  hudCtx.fillText('SHIELD', 0, -50);
+  for(let i=0;i<maxShield;i++){
+    const y = -34 + i*16;
+    const on = (maxShield-1-i) < shield;
+    hudCtx.fillStyle = on ? '#4fdd77' : 'rgba(60,100,70,0.35)';
+    hudCtx.fillRect(-10, y, 20, 12);
+    hudCtx.strokeStyle='rgba(120,255,160,0.6)';
+    hudCtx.lineWidth=1;
+    hudCtx.strokeRect(-10, y, 20, 12);
+  }
+  // BOOST bar
+  hudCtx.fillStyle='#ffcc66';
+  hudCtx.fillText('BOOST', 0, 38);
+  hudCtx.fillStyle='rgba(0,10,5,0.6)';
+  hudCtx.fillRect(-10, 42, 20, 8);
+  hudCtx.strokeStyle='rgba(255,180,80,0.7)';
+  hudCtx.lineWidth=1;
+  hudCtx.strokeRect(-10, 42, 20, 8);
+  const bw = Math.max(0,Math.min(1,boost))*18;
+  hudCtx.fillStyle='#ff9933';
+  hudCtx.fillRect(-9, 43, bw, 6);
+  hudCtx.restore();
+}
+// Speed streaks — 2D radial lines from centre to reinforce forward motion.
+const STREAKS = [];
+for(let i=0;i<34;i++){
+  STREAKS.push({a:Math.random()*Math.PI*2, r:0.25+Math.random()*0.8, spd:0.6+Math.random()*1.4, len:0.08+Math.random()*0.18});
+}
+function drawSpeedStreaks(spd,boost){
+  const w=window.innerWidth, h=window.innerHeight;
+  const cx=w*0.5, cy=h*0.5;
+  // intensity scales with speed + boost
+  const intensity = Math.min(1, spd/70) + boost*0.6;
+  if(intensity<0.05) return;
+  const diag = Math.hypot(w,h)*0.5;
+  hudCtx.save();
+  hudCtx.globalCompositeOperation='lighter';
+  hudCtx.strokeStyle='rgba(255,255,255,'+ (0.10+0.35*intensity).toFixed(2) +')';
+  hudCtx.lineWidth = 1.2 + boost*1.4;
+  for(const s of STREAKS){
+    // advance outward; wrap
+    s.r += s.spd * (0.012 + 0.04*intensity);
+    if(s.r>1.25){ s.r = 0.08; s.a = Math.random()*Math.PI*2; }
+    const r0 = s.r * diag;
+    const r1 = (s.r - s.len*(0.6+boost*0.8)) * diag;
+    if(r1<=0) continue;
+    const ca=Math.cos(s.a), sa=Math.sin(s.a);
+    hudCtx.beginPath();
+    hudCtx.moveTo(cx + ca*r0, cy + sa*r0);
+    hudCtx.lineTo(cx + ca*r1, cy + sa*r1);
+    hudCtx.stroke();
+  }
   hudCtx.restore();
 }
 function drawStick(cx,cy,x,y){
@@ -1409,8 +1496,8 @@ function startGame(){
   document.getElementById('menuBtn').style.display='block';
   if(STATE.ctl==='touch'){ document.getElementById('boostBtn').style.display='block'; }
   document.getElementById('instr-panel').textContent =
-    STATE.ctl==='touch' ? 'L: PITCH / ROLL   R: YAW / THROTTLE   BOOST button bottom-right'
-                        : 'MOUSE look  A/D roll  W/S pitch trim  Shift/Ctrl thr  Space boost  (click to capture mouse)';
+    STATE.ctl==='touch' ? 'STICK steers + climbs   BOOST button bottom-right'
+                        : 'MOUSE steers + climbs   SPACE boost   (click to capture mouse)';
 
   DIST=0; MULT=1.0;
   buildWorld();
