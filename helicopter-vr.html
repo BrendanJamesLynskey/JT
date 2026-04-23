@@ -1439,42 +1439,45 @@ function buildWorld(){
 }
 
 // ─── ARCADE / VECTOR LOOK ──────────────────────────────────
-// After the scene is fully built, convert everything to a classic
-// Battlezone / Star Wars 1983 arcade look: dark void with bright
-// wireframe geometry, plus solid neon shapes for projectiles + pickups.
-const RETRO_KIND_COLOR = {
-  pylon:   0x44e0ff,
-  arch:    0xffdd22,
-  bldg:    0xff55aa,
-  turret:  0xff3a3a,
-  cable:   0x888888,
-  balloon: 0xff9966,
+// Per-kind colours — stay vivid and distinct across every TOD. The
+// identity of a pylon vs. a turret vs. a building is always readable.
+const KIND_COLOR = {
   terrain: 0x22ff66,
   road:    0xffffff,
+  pylon:   0x44e0ff,   // cyan
+  arch:    0xffdd22,   // yellow
+  bldg:    0xff55aa,   // hot pink
+  turret:  0xff3a3a,   // red
+  cable:   0xcccccc,   // grey
+  balloon: 0xff9966,   // peach
 };
-// Time-of-day palette for the arcade mode. `tint` multiplies every
-// wireframe colour; `bg` and `fogC/fogD` set the sky void + fog.
+// Time of day controls only the sky void, fog colour/density and star
+// colour — not the wireframe palette. This keeps the scene colourful.
 const ARCADE_TOD = {
-  dawn:  { bg:0x140614, fogC:0x2a1420, fogD:0.0048, tint:[1.10,0.78,0.55], starCol:0xffd8a8 },
-  noon:  { bg:0x000a18, fogC:0x001028, fogD:0.0040, tint:[0.92,1.00,1.10], starCol:0xd8e8ff },
-  dusk:  { bg:0x1a0618, fogC:0x30082a, fogD:0.0052, tint:[1.08,0.60,0.95], starCol:0xffb0d8 },
-  night: { bg:0x000000, fogC:0x000a00, fogD:0.0055, tint:[0.55,1.10,0.60], starCol:0x88ffaa },
+  dawn:  { bg:0x180a04, fog:0x3a140a, fogD:0.0055, starCol:0xffd9a6 },
+  noon:  { bg:0x000c1c, fog:0x00132a, fogD:0.0040, starCol:0xffffff },
+  dusk:  { bg:0x1a0620, fog:0x360a38, fogD:0.0058, starCol:0xffbce0 },
+  night: { bg:0x000000, fog:0x000a04, fogD:0.0060, starCol:0x88ffaa },
 };
-const ARCADE_WX = { clear:{fogMul:0.85, dark:1.00}, haze:{fogMul:1.8, dark:0.85}, storm:{fogMul:2.6, dark:0.60} };
+// Weather: thicker fog + overall dimming. Storm keeps the lightning.
+const ARCADE_WX = {
+  clear: { fogMul:0.85, brightness:1.00 },
+  haze:  { fogMul:2.00, brightness:0.82 },
+  storm: { fogMul:3.20, brightness:0.55 },
+};
 function applyArcadeLook(){
   const tod = ARCADE_TOD[STATE.tod] || ARCADE_TOD.night;
   const wx  = ARCADE_WX[STATE.wx]  || ARCADE_WX.clear;
-  // void background + tight dark fog tinted by TOD and thickened by WX
+  // void background + tight fog from TOD, thickened by weather
   scene.background = new THREE.Color(tod.bg);
-  scene.fog = new THREE.FogExp2(tod.fogC, tod.fogD * wx.fogMul);
-  // disable the painterly sky and sun
+  scene.fog = new THREE.FogExp2(tod.fog, tod.fogD * wx.fogMul);
+  // hide the painterly sky / sun (their textures would break the arcade look)
   if(sky){ sky.visible = false; }
   if(sunSprite){ sunSprite.visible = false; }
-  // kill directional/hemi lighting (MeshBasicMaterial ignores it anyway)
   if(hemi){ hemi.intensity = 0; }
   if(dirL){ dirL.intensity = 0; }
   if(ambL){ ambL.intensity = 1.0; }
-  // ensure stars are present, coloured by TOD
+  // stars tinted by TOD, opacity dimmed by weather
   if(stars){ scene.remove(stars); stars.geometry.dispose(); stars.material.dispose(); stars=null; }
   {
     const N=1400;
@@ -1485,28 +1488,24 @@ function applyArcadeLook(){
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos,3));
-    const m = new THREE.PointsMaterial({color:tod.starCol, size:2, sizeAttenuation:false, transparent:true, opacity:0.85*wx.dark, depthWrite:false});
+    const m = new THREE.PointsMaterial({color:tod.starCol, size:2, sizeAttenuation:false, transparent:true, opacity:0.85*wx.brightness, depthWrite:false});
     stars = new THREE.Points(g,m);
     stars.renderOrder=-9;
     scene.add(stars);
   }
-  const tintColor = (c)=>{
-    const r = Math.min(1, c.r * tod.tint[0] * wx.dark);
-    const g = Math.min(1, c.g * tod.tint[1] * wx.dark);
-    const b = Math.min(1, c.b * tod.tint[2] * wx.dark);
-    c.setRGB(r,g,b);
+  // Obstacle colours stay identical across TODs — only overall brightness
+  // is scaled by weather so storm feels genuinely dim.
+  const dim = (hex)=>{
+    const c = new THREE.Color(hex);
+    c.multiplyScalar(wx.brightness);
+    return c;
   };
-  // Pre-index OBSTACLES by their root mesh so material conversion is
-  // O(meshes * tree_depth) instead of O(meshes * obstacle_count). The
-  // old nested scan was 20k+ meshes x 1500+ obstacles = hundreds of
-  // millions of ops and effectively froze the tab.
   const kindByRoot = new Map();
   for(const ob of OBSTACLES){ if(ob.mesh) kindByRoot.set(ob.mesh, ob.kind); }
   scene.traverse(obj=>{
     if(!obj.isMesh || obj.userData.retroDone) return;
     const m = obj.material;
     if(!m) return;
-    // Climb the parent chain until we hit a registered obstacle root.
     let kind = null;
     for(let cur=obj; cur; cur=cur.parent){
       const k = kindByRoot.get(cur); if(k){ kind = k; break; }
@@ -1514,25 +1513,18 @@ function applyArcadeLook(){
     const emissive = m.emissive && ((m.emissiveIntensity||0) > 0.5);
     let nm;
     if(emissive){
-      // keep it a solid bright blob (missiles, pickups) — tint lightly
+      // solid bright blob (missiles, pickups) — keep the original emissive hue
       const col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15);
-      tintColor(col);
+      col.multiplyScalar(wx.brightness);
       nm = new THREE.MeshBasicMaterial({color:col});
     } else {
       let col;
-      if(kind && RETRO_KIND_COLOR[kind]!=null) col = new THREE.Color(RETRO_KIND_COLOR[kind]);
-      else if(obj===terrain) col = new THREE.Color(RETRO_KIND_COLOR.terrain);
-      else if(obj===roadObj) col = new THREE.Color(RETRO_KIND_COLOR.road);
-      else if(m.color) col = m.color.clone();
-      else col = new THREE.Color(0x88ffaa);
-      const hsl = {}; col.getHSL(hsl);
-      col.setHSL(hsl.h, Math.min(1, hsl.s+0.2), Math.max(0.6, hsl.l));
-      tintColor(col);
-      nm = new THREE.MeshBasicMaterial({
-        color: col,
-        wireframe: true,
-        vertexColors: false,
-      });
+      if(kind && KIND_COLOR[kind]!=null)      col = dim(KIND_COLOR[kind]);
+      else if(obj===terrain)                  col = dim(KIND_COLOR.terrain);
+      else if(obj===roadObj)                  col = dim(KIND_COLOR.road);
+      else if(m.color)                        col = m.color.clone().multiplyScalar(wx.brightness);
+      else                                    col = dim(0x88ffaa);
+      nm = new THREE.MeshBasicMaterial({ color:col, wireframe:true });
     }
     obj.userData.retroDone = true;
     obj.material = nm;
