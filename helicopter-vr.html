@@ -232,9 +232,9 @@ document.querySelectorAll('.ebtn[data-grp="ctl"]').forEach(b=>{
 function updateHint(){
   const el=document.getElementById('hintText');
   const extra = (STATE.ctl==='desktop')
-    ? ' &nbsp;<b>A/D</b> or <b>&larr;/&rarr;</b> steer, <b>W/S</b> or <b>&uarr;/&darr;</b> climb/dive, <b>Space</b> boost.'
+    ? ' &nbsp;Keys: <b>A/D</b> or <b>&larr;/&rarr;</b> steer, <b>W/S</b> or <b>&uarr;/&darr;</b> climb/dive, <b>Space</b> boost, <b>F</b> fire.'
     : '';
-  el.innerHTML='Drag the on-screen <b>STICK</b> (bottom-left) to steer + climb/dive. Hit <b>BOOST</b> to push faster. Throttle is automatic.'+extra;
+  el.innerHTML='Drag the on-screen <b>STICK</b> (bottom-centre) to steer + climb/dive. Hold <b>FIRE</b> (left) to shoot; <b>BOOST</b> (right) to push faster. Throttle is automatic.'+extra;
 }
 updateHint();
 
@@ -1321,22 +1321,26 @@ function tickParticles(dt){
   }
 }
 
-// Boost button
+// Hold-button helper — works for finger, stylus and mouse. Pointer
+// capture keeps the 'down' state active even if the cursor leaves the
+// button while held, so desktop click-and-drag doesn't cancel fire/boost.
+function wireHoldButton(el, onChange){
+  el.addEventListener('pointerdown', e=>{
+    e.stopPropagation(); e.preventDefault();
+    try{ el.setPointerCapture(e.pointerId); }catch(_){}
+    onChange(true); el.classList.add('active');
+  });
+  ['pointerup','pointercancel'].forEach(ev=>{
+    el.addEventListener(ev, e=>{
+      try{ el.releasePointerCapture(e.pointerId); }catch(_){}
+      onChange(false); el.classList.remove('active');
+    });
+  });
+}
 const boostEl=document.getElementById('boostBtn');
-['pointerdown','pointermove'].forEach(ev=>{
-  boostEl.addEventListener(ev, e=>{e.stopPropagation(); TOUCH.boost=true; boostEl.classList.add('active');});
-});
-['pointerup','pointercancel','pointerleave'].forEach(ev=>{
-  boostEl.addEventListener(ev, e=>{e.stopPropagation(); TOUCH.boost=false; boostEl.classList.remove('active');});
-});
-// Fire button (mirror layout on the left)
+wireHoldButton(boostEl, v=>{ TOUCH.boost=v; });
 const fireEl=document.getElementById('fireBtn');
-['pointerdown','pointermove'].forEach(ev=>{
-  fireEl.addEventListener(ev, e=>{e.stopPropagation(); TOUCH.fire=true; fireEl.classList.add('active');});
-});
-['pointerup','pointercancel','pointerleave'].forEach(ev=>{
-  fireEl.addEventListener(ev, e=>{e.stopPropagation(); TOUCH.fire=false; fireEl.classList.remove('active');});
-});
+wireHoldButton(fireEl, v=>{ TOUCH.fire=v; });
 
 // prevent gesture scroll/zoom
 document.addEventListener('gesturestart', e=>e.preventDefault());
