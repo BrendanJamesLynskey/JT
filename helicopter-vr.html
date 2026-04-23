@@ -1144,7 +1144,7 @@ function spawnMissile(fromPos, targetPos){
   const vel=dir.multiplyScalar(72);
   const geo=new THREE.CylinderGeometry(0.25,0.25,1.2,8);
   geo.rotateX(Math.PI/2); // align to local -Z
-  const mat=new THREE.MeshStandardMaterial({color:0xff4422, emissive:0xff3311, emissiveIntensity:1.5, roughness:0.5});
+  const mat=new THREE.MeshBasicMaterial({color:0xff5a3a});
   const m=new THREE.Mesh(geo, mat);
   m.position.copy(fromPos);
   scene.add(m);
@@ -1435,6 +1435,87 @@ function buildWorld(){
   // buildTrees(); // disabled — ribbon terrain leaves no useful rim for trees
   populateObstacles(spline);
   buildHeli();
+  applyArcadeLook();
+}
+
+// ─── ARCADE / VECTOR LOOK ──────────────────────────────────
+// After the scene is fully built, convert everything to a classic
+// Battlezone / Star Wars 1983 arcade look: pure black void with bright
+// wireframe geometry, plus solid neon shapes for projectiles + pickups.
+const RETRO_KIND_COLOR = {
+  pylon:   0x44e0ff,
+  arch:    0xffdd22,
+  bldg:    0xff55aa,
+  turret:  0xff3a3a,
+  cable:   0x888888,
+  balloon: 0xff9966,
+  terrain: 0x22ff66,
+  road:    0xffffff,
+};
+function applyArcadeLook(){
+  // void background + tight dark fog
+  scene.background = new THREE.Color(0x000000);
+  scene.fog = new THREE.FogExp2(0x0a0815, 0.0055);
+  // disable the painterly sky and sun
+  if(sky){ sky.visible = false; }
+  if(sunSprite){ sunSprite.visible = false; }
+  // kill directional/hemi lighting (MeshBasicMaterial ignores it anyway)
+  if(hemi){ hemi.intensity = 0; }
+  if(dirL){ dirL.intensity = 0; }
+  if(ambL){ ambL.intensity = 1.0; }
+  // ensure stars are present in the void (independent of TOD)
+  if(!stars){
+    const N=1400;
+    const pos = new Float32Array(N*3);
+    for(let i=0;i<N;i++){
+      const v = new THREE.Vector3((Math.random()-0.5), Math.random()*0.8+0.05, (Math.random()-0.5)).normalize().multiplyScalar(1700);
+      pos[i*3]=v.x; pos[i*3+1]=v.y; pos[i*3+2]=v.z;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    const m = new THREE.PointsMaterial({color:0x88ffaa, size:2, sizeAttenuation:false, transparent:true, opacity:0.8, depthWrite:false});
+    stars = new THREE.Points(g,m);
+    stars.renderOrder=-9;
+    scene.add(stars);
+  }
+  // convert materials
+  scene.traverse(obj=>{
+    if(!obj.isMesh || obj.userData.retroDone) return;
+    const m = obj.material;
+    if(!m) return;
+    // Find obstacle kind for colour if any ancestor was registered.
+    let kind = null;
+    for(const ob of OBSTACLES){
+      if(ob.mesh===obj || ob.mesh===obj.parent || (ob.mesh&&ob.mesh.children&&ob.mesh.children.indexOf(obj)>=0)){
+        kind = ob.kind; break;
+      }
+    }
+    const emissive = m.emissive && ((m.emissiveIntensity||0) > 0.5);
+    let nm;
+    if(emissive){
+      // keep it a solid bright blob (missiles, pickups)
+      const col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15);
+      nm = new THREE.MeshBasicMaterial({color:col});
+    } else {
+      let col;
+      if(kind && RETRO_KIND_COLOR[kind]!=null) col = new THREE.Color(RETRO_KIND_COLOR[kind]);
+      else if(obj===terrain) col = new THREE.Color(RETRO_KIND_COLOR.terrain);
+      else if(obj===roadObj) col = new THREE.Color(RETRO_KIND_COLOR.road);
+      else if(m.color) col = m.color.clone();
+      else col = new THREE.Color(0x88ffaa);
+      // brighten
+      const hsl = {}; col.getHSL(hsl);
+      col.setHSL(hsl.h, Math.min(1, hsl.s+0.2), Math.max(0.6, hsl.l));
+      nm = new THREE.MeshBasicMaterial({
+        color: col,
+        wireframe: true,
+        vertexColors: false,   // uniform per-obstacle colour looks cleaner
+      });
+    }
+    obj.userData.retroDone = true;
+    obj.material = nm;
+    if(m.dispose) m.dispose();
+  });
 }
 
 // ─── COLLISION ─────────────────────────────────────────────
@@ -1811,6 +1892,22 @@ function drawCockpitAndHUD(){
   }
 
   // (on-screen stick is a real DOM element now; no canvas hint needed)
+  drawScanlines(w, h);
+}
+// CRT scanlines + soft edge vignette across the whole canvas.
+function drawScanlines(w,h){
+  hudCtx.save();
+  hudCtx.fillStyle='rgba(0,0,0,0.28)';
+  for(let y=0;y<h;y+=3){
+    hudCtx.fillRect(0,y,w,1);
+  }
+  // soft edge vignette for CRT feel
+  const vg = hudCtx.createRadialGradient(w*0.5, h*0.5, Math.min(w,h)*0.35, w*0.5, h*0.5, Math.max(w,h)*0.75);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  hudCtx.fillStyle = vg;
+  hudCtx.fillRect(0,0,w,h);
+  hudCtx.restore();
 }
 function drawADI(cx,cy,r,pitchDeg,rollDeg){
   hudCtx.save();
