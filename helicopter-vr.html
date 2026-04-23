@@ -64,7 +64,8 @@ html,body{background:#000;overflow:hidden;font-family:'Share Tech Mono',monospac
   box-shadow:0 0 18px rgba(255,140,40,.55);}
 #boostBtn.active{background:radial-gradient(circle,#ffaa33,#aa4400 70%);color:#fff;}
 
-#stickBase{position:fixed;left:24px;bottom:calc(env(safe-area-inset-bottom,18px) + 30px);
+#stickBase{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,18px) + 24px);
+  transform:translateX(-50%);
   width:150px;height:150px;border-radius:50%;
   background:radial-gradient(circle,rgba(30,60,90,.55),rgba(10,30,50,.25) 78%);
   border:2px solid rgba(120,200,255,.55);display:none;touch-action:none;user-select:none;
@@ -1662,17 +1663,17 @@ function drawCockpitAndHUD(){
   const spd = H.vel.length();
   const alt = H.pos.y - groundY(H.pos.x,H.pos.z);
 
-  // Attitude indicator (centre)
-  drawADI(ix, iy, 62, pitchDeg, rollDeg);
-  // Airspeed tape (left)
-  drawTape(w*0.22, iy, 140, 60, spd, 0, 100, 'SPEED', Math.round(spd));
+  // Attitude indicator (left side, clear of the centred stick)
+  drawADI(w*0.14, h*0.72, 58, pitchDeg, rollDeg);
+  // Airspeed tape (left, below ADI)
+  drawTape(w*0.14, iy, 130, 52, spd, 0, 100, 'SPEED', Math.round(spd));
   // Altitude tape (right)
-  drawTape(w*0.78, iy, 140, 60, Math.max(0,alt), 0, 300, 'ALT', Math.round(alt));
+  drawTape(w*0.86, iy, 130, 52, Math.max(0,alt), 0, 300, 'ALT', Math.round(alt));
   // Heading tape (top centre below canopy)
   drawHeading(w*0.5, h*0.19, 280, yawDeg);
 
   // shield pips + boost bar
-  drawLifeAndBoost(w*0.13, iy, H.life, H.maxLife, H.boost);
+  drawLifeAndBoost(w*0.045, h*0.72, H.life, H.maxLife, H.boost);
   // radial speed streaks — reinforce sense of motion
   drawSpeedStreaks(spd, H.boost);
   // invuln flash (short periodic alpha wash after a hit)
