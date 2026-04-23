@@ -851,7 +851,7 @@ const H = {
   alive:true,
   startT:0,
   // arcade: shield absorbs hits; short invuln window after hit
-  shield:3, maxShield:3, invuln:0,
+  shield:5, maxShield:5, invuln:0,
   // camera shake accumulator
   shake:0,
 };
@@ -1209,21 +1209,24 @@ function step(dt){
   H.boost = Math.max(0, Math.min(1, H.boost));
   const boostF = 1 + H.boost*0.55;
 
-  // Arcade steering — amplify small inputs (expo curve) so a tiny nudge
-  // gives a real turn, and auto-level hard when the stick is released.
-  const expo = v => Math.sign(v) * Math.pow(Math.abs(v), 0.65);
-  const rollIn  = expo(IN.roll);
-  const pitchIn = expo(IN.pitch);
-  const targetRoll  = rollIn  * 0.85;  // ~49° max bank
-  const targetPitch = pitchIn * 0.50;
-  // Very snappy response
-  const rollLerp  = 1 - Math.exp(-dt*9.0);
-  const pitchLerp = 1 - Math.exp(-dt*7.0);
+  // Gentle, forgiving steering. Inverse-expo curve tames tiny movements
+  // (squaring an input <1 shrinks it), a dead-zone removes jitter, and
+  // modest target angles keep the horizon steady. The helicopter almost
+  // flies itself; the stick nudges it.
+  const dz = v => (Math.abs(v)<0.10 ? 0 : Math.sign(v)*(Math.abs(v)-0.10)/0.90);
+  const smooth = v => Math.sign(v) * (v*v); // small stick → very small response
+  const rollIn  = smooth(dz(IN.roll));
+  const pitchIn = smooth(dz(IN.pitch));
+  const targetRoll  = rollIn  * 0.50;  // ~29° max bank (was 49°)
+  const targetPitch = pitchIn * 0.30;  // gentler climb/dive
+  // Slower, softer response
+  const rollLerp  = 1 - Math.exp(-dt*4.0);
+  const pitchLerp = 1 - Math.exp(-dt*3.5);
   H.ang.z += ((-targetRoll)  - H.ang.z) * rollLerp;
   H.ang.x += (( targetPitch) - H.ang.x) * pitchLerp;
-  // Auto-level: if no input, snap back toward 0 quickly
-  if(Math.abs(IN.roll)<0.08)  H.ang.z *= (1 - Math.min(1,dt*4.0));
-  if(Math.abs(IN.pitch)<0.08) H.ang.x *= (1 - Math.min(1,dt*3.0));
+  // Auto-level: if stick near centre, return firmly to level flight
+  if(Math.abs(IN.roll)<0.12)  H.ang.z *= (1 - Math.min(1,dt*3.2));
+  if(Math.abs(IN.pitch)<0.12) H.ang.x *= (1 - Math.min(1,dt*2.8));
 
   // Rebuild orientation from heading + current roll/pitch
   // Extract current heading (yaw)
@@ -1232,7 +1235,8 @@ function step(dt){
   // Bank-to-turn: bank angle yields yaw rate. Sign chosen so stick-right
   // banks right and turns right (Three.js YXZ: +Y yaw turns LEFT, so we
   // need yawRate to be negative when H.ang.z is negative, i.e. same sign).
-  const turnRate = H.ang.z * 2.4; // rad/s
+  // Softer turn gain so banking feels like a gentle curve, not a whip.
+  const turnRate = H.ang.z * 1.4; // rad/s
   yaw += turnRate * dt;
   // Recompose
   H.quat.setFromEuler(new THREE.Euler(H.ang.x, yaw, H.ang.z, 'YXZ'));
@@ -1242,12 +1246,13 @@ function step(dt){
   upTmp.set(0,1,0).applyQuaternion(H.quat);
   rightTmp.set(1,0,0).applyQuaternion(H.quat);
 
-  // Trench-run cruise: much faster; boost pushes further still.
-  const diffSpd = STATE.diff==='recon' ? 58 : STATE.diff==='hot' ? 95 : 75;
+  // Relaxed cruise — still fast, but giving the player time to react.
+  // Boost becomes the "feel the rush" moment instead of the default pace.
+  const diffSpd = STATE.diff==='recon' ? 38 : STATE.diff==='hot' ? 62 : 50;
   const cruise  = diffSpd * boostF;
   const targetVel = forwardTmp.clone().multiplyScalar(cruise);
-  // Climb/dive overlay from pitch (arcade: strong altitude authority)
-  const climb = H.ang.x * 22.0;          // m/s
+  // Climb/dive overlay from pitch — gentler so altitude doesn't swing wildly
+  const climb = H.ang.x * 11.0;          // m/s
   targetVel.y += climb;
 
   // Ease current velocity toward target — arcade: no inertia struggle
@@ -1550,15 +1555,16 @@ function drawShieldAndBoost(cx,cy,shield,maxShield,boost){
   hudCtx.fillStyle='#8fffaa';
   hudCtx.font='9px "Share Tech Mono"';
   hudCtx.textAlign='center';
-  hudCtx.fillText('SHIELD', 0, -50);
+  hudCtx.fillText('SHIELD', 0, -44);
   for(let i=0;i<maxShield;i++){
-    const y = -34 + i*16;
+    // compact pip layout so larger shield counts still fit neatly
+    const y = -34 + i*12;
     const on = (maxShield-1-i) < shield;
     hudCtx.fillStyle = on ? '#4fdd77' : 'rgba(60,100,70,0.35)';
-    hudCtx.fillRect(-10, y, 20, 12);
+    hudCtx.fillRect(-10, y, 20, 9);
     hudCtx.strokeStyle='rgba(120,255,160,0.6)';
     hudCtx.lineWidth=1;
-    hudCtx.strokeRect(-10, y, 20, 12);
+    hudCtx.strokeRect(-10, y, 20, 9);
   }
   // BOOST bar
   hudCtx.fillStyle='#ffcc66';
