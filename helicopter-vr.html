@@ -528,10 +528,11 @@ function valleyY(baseY, d, x, z){
   return y + pnoise(x,z) * (0.08 + 1.6*wallMix);
 }
 function buildTerrain(){
-  // Ribbon mesh extruded along the spline. Covers the full road length with
-  // a valley cross-section, so terrain is always precisely under the road.
-  const SLICES=1200;
-  const DS=[-500,-260,-140,-80,-45,-25,-14,-7,-3,0,3,7,14,25,45,80,140,260,500];
+  // Ribbon mesh extruded along the spline. Deliberately low resolution
+  // so wireframe lines stay clearly readable as individual lines rather
+  // than merging into a gray wash at distance (classic arcade look).
+  const SLICES=360;                           // was 1200 — far fewer bands
+  const DS=[-500,-180,-80,-32,-16,0,16,32,80,180,500];   // 11 samples
   const NC=DS.length;
   const positions=new Float32Array(SLICES*NC*3);
   const colors=new Float32Array(SLICES*NC*3);
@@ -1475,7 +1476,7 @@ const TERRAIN_PALETTE = [
   [0.25,1.00,0.95], // cyan
   [1.00,0.40,0.30], // coral
 ];
-const TERRAIN_BAND_SLICES = 60; // slices per colour band (~6.6 km at step 110)
+const TERRAIN_BAND_SLICES = 18; // slices per colour band (~6 km at step 110)
 // Time of day controls only the sky void, fog colour/density and star
 // colour — not the wireframe palette. This keeps the scene colourful.
 const ARCADE_TOD = {
