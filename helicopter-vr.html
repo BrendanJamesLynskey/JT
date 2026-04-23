@@ -64,6 +64,14 @@ html,body{background:#000;overflow:hidden;font-family:'Share Tech Mono',monospac
   box-shadow:0 0 18px rgba(255,140,40,.55);}
 #boostBtn.active{background:radial-gradient(circle,#ffaa33,#aa4400 70%);color:#fff;}
 
+#fireBtn{position:fixed;left:24px;bottom:calc(env(safe-area-inset-bottom,18px) + 18px);
+  width:84px;height:84px;border-radius:50%;
+  background:radial-gradient(circle,rgba(255,60,60,.35),rgba(180,0,0,.1) 70%);
+  border:2px solid #ff4444;color:#ffcccc;font-family:'Orbitron',sans-serif;letter-spacing:2px;font-size:.85rem;
+  z-index:15;display:none;cursor:pointer;touch-action:none;user-select:none;
+  box-shadow:0 0 18px rgba(255,60,60,.55);}
+#fireBtn.active{background:radial-gradient(circle,#ff6666,#aa0000 70%);color:#fff;}
+
 #stickBase{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,18px) + 24px);
   transform:translateX(-50%);
   width:150px;height:150px;border-radius:50%;
@@ -161,6 +169,7 @@ html,body{background:#000;overflow:hidden;font-family:'Share Tech Mono',monospac
   <div id="stickLabel">STICK</div>
   <div id="stickKnob"></div>
 </div>
+<button id="fireBtn">FIRE</button>
 <button id="boostBtn">BOOST</button>
 <button id="menuBtn" onclick="goMenu()">MENU</button>
 
@@ -999,7 +1008,7 @@ function resetHeli(){
 // touch and desktop. Keyboard still works as a secondary input.
 const STICK={ x:0, y:0, active:false, id:-1 };
 const KEYS={};
-const TOUCH={ boost:false };
+const TOUCH={ boost:false, fire:false };
 const STICK_RANGE = 52; // px travel from centre
 const stickBaseEl = document.getElementById('stickBase');
 const stickKnobEl = document.getElementById('stickKnob');
@@ -1184,6 +1193,106 @@ function tickMissiles(dt){
   }
 }
 
+// ─── BULLETS (helicopter nose gun) ─────────────────────────
+const BULLETS=[];
+let GUN_COOLDOWN = 0;   // seconds until next shot allowed
+const GUN_RATE = 0.09;  // seconds between shots when trigger held
+function spawnBullet(){
+  // Spawn slightly ahead of cockpit, fired along current heli-forward.
+  const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(H.quat);
+  const right=new THREE.Vector3(1,0,0).applyQuaternion(H.quat);
+  const side=(Math.random()-0.5)*0.8;
+  const origin=H.pos.clone().addScaledVector(fwd, 2.5).addScaledVector(right, side);
+  const vel=fwd.clone().multiplyScalar(260).add(H.vel); // inherit heli velocity
+  const geo=new THREE.CylinderGeometry(0.16,0.16,2.0,6);
+  geo.rotateX(Math.PI/2);
+  const mat=new THREE.MeshBasicMaterial({color:0xffee66});
+  const m=new THREE.Mesh(geo,mat);
+  m.position.copy(origin);
+  scene.add(m);
+  BULLETS.push({mesh:m, vel:vel, life:1.2});
+  // muzzle flash sound
+  if(AC && masterGain){
+    const t=AC.currentTime;
+    const o=AC.createOscillator(); const g=AC.createGain();
+    o.type='square'; o.frequency.setValueAtTime(900, t);
+    o.frequency.exponentialRampToValueAtTime(180, t+0.08);
+    g.gain.setValueAtTime(0.08, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t+0.09);
+    o.connect(g); g.connect(masterGain); o.start(); o.stop(t+0.10);
+  }
+}
+function tickBullets(dt){
+  // cooldown + hold-to-fire
+  GUN_COOLDOWN -= dt;
+  const firing = (TOUCH.fire || KEYS['KeyF'] || KEYS['KeyJ']) && H.alive && !STATE.over;
+  if(firing && GUN_COOLDOWN<=0){
+    spawnBullet();
+    GUN_COOLDOWN = GUN_RATE;
+  }
+  for(let i=BULLETS.length-1;i>=0;i--){
+    const b=BULLETS[i];
+    b.life -= dt;
+    b.mesh.position.addScaledVector(b.vel, dt);
+    // orient along velocity
+    const look=b.mesh.position.clone().add(b.vel);
+    b.mesh.lookAt(look);
+    let dead = b.life<=0;
+    // vs missiles
+    if(!dead){
+      for(let j=MISSILES.length-1;j>=0;j--){
+        const mi=MISSILES[j];
+        const dx=b.mesh.position.x-mi.mesh.position.x;
+        const dy=b.mesh.position.y-mi.mesh.position.y;
+        const dz=b.mesh.position.z-mi.mesh.position.z;
+        if(dx*dx+dy*dy+dz*dz < 2.0*2.0){
+          explosionBurst(mi.mesh.position.clone(), 0.35);
+          scene.remove(mi.mesh); scene.remove(mi.trail);
+          if(mi.mesh.geometry) mi.mesh.geometry.dispose();
+          if(mi.mesh.material) mi.mesh.material.dispose();
+          if(mi.trail.material) mi.trail.material.dispose();
+          MISSILES.splice(j,1);
+          dead=true;
+          break;
+        }
+      }
+    }
+    // vs turrets/balloons
+    if(!dead){
+      for(let j=OBSTACLES.length-1;j>=0;j--){
+        const o=OBSTACLES[j];
+        if(o.kind!=='turret' && o.kind!=='balloon') continue;
+        const dx=b.mesh.position.x-o.pos.x;
+        const dy=b.mesh.position.y-o.pos.y;
+        const dz=b.mesh.position.z-o.pos.z;
+        const hitR = o.kind==='balloon' ? 4.0 : 2.5;
+        if(dx*dx+dy*dy+dz*dz < hitR*hitR){
+          explosionBurst(o.mesh.position.clone(), o.kind==='balloon'?0.7:1.0);
+          if(o.kind==='turret'){ o.active=false; }
+          scene.remove(o.mesh);
+          OBSTACLES.splice(j,1);
+          dead=true;
+          break;
+        }
+      }
+    }
+    // vs terrain
+    if(!dead){
+      const gy=groundY(b.mesh.position.x, b.mesh.position.z);
+      if(b.mesh.position.y < gy + 0.2){
+        explosionBurst(b.mesh.position.clone(), 0.12);
+        dead=true;
+      }
+    }
+    if(dead){
+      scene.remove(b.mesh);
+      if(b.mesh.geometry) b.mesh.geometry.dispose();
+      if(b.mesh.material) b.mesh.material.dispose();
+      BULLETS.splice(i,1);
+    }
+  }
+}
+
 function tickParticles(dt){
   for(let i=PARTICLES.length-1;i>=0;i--){
     const p=PARTICLES[i];
@@ -1219,6 +1328,14 @@ const boostEl=document.getElementById('boostBtn');
 });
 ['pointerup','pointercancel','pointerleave'].forEach(ev=>{
   boostEl.addEventListener(ev, e=>{e.stopPropagation(); TOUCH.boost=false; boostEl.classList.remove('active');});
+});
+// Fire button (mirror layout on the left)
+const fireEl=document.getElementById('fireBtn');
+['pointerdown','pointermove'].forEach(ev=>{
+  fireEl.addEventListener(ev, e=>{e.stopPropagation(); TOUCH.fire=true; fireEl.classList.add('active');});
+});
+['pointerup','pointercancel','pointerleave'].forEach(ev=>{
+  fireEl.addEventListener(ev, e=>{e.stopPropagation(); TOUCH.fire=false; fireEl.classList.remove('active');});
 });
 
 // prevent gesture scroll/zoom
@@ -1287,6 +1404,12 @@ function buildWorld(){
   while(MISSILES.length){
     const mi=MISSILES.pop(); scene.remove(mi.mesh); scene.remove(mi.trail);
   }
+  while(BULLETS.length){
+    const b=BULLETS.pop(); scene.remove(b.mesh);
+    if(b.mesh.geometry) b.mesh.geometry.dispose();
+    if(b.mesh.material) b.mesh.material.dispose();
+  }
+  GUN_COOLDOWN = 0;
   if(terrain){scene.remove(terrain); terrain.geometry.dispose(); terrain.material.dispose(); terrain=null;}
   if(treesA){scene.remove(treesA); treesA.geometry.dispose(); treesA.material.dispose(); treesA=null;}
   if(treesB){scene.remove(treesB); treesB.geometry.dispose(); treesB.material.dispose(); treesB=null;}
@@ -1668,7 +1791,7 @@ function drawCockpitAndHUD(){
   // Airspeed tape (left, below ADI)
   drawTape(w*0.14, iy, 130, 52, spd, 0, 100, 'SPEED', Math.round(spd));
   // Altitude tape (right)
-  drawTape(w*0.86, iy, 130, 52, Math.max(0,alt), 0, 300, 'ALT', Math.round(alt));
+  drawTape(w*0.86, iy, 130, 52, Math.max(0,alt), 0, 300, 'AGL', Math.round(alt));
   // Heading tape (top centre below canopy)
   drawHeading(w*0.5, h*0.19, 280, yawDeg);
 
@@ -1880,9 +2003,10 @@ function startGame(){
   document.getElementById('hud').style.display='block';
   document.getElementById('menuBtn').style.display='block';
   document.getElementById('boostBtn').style.display='block';
+  document.getElementById('fireBtn').style.display='block';
   stickBaseEl.style.display='block';
   document.getElementById('instr-panel').textContent =
-    'STICK to steer + climb/dive   BOOST to push harder';
+    'STICK to steer + climb/dive   FIRE to shoot   BOOST to push harder';
 
   DIST=0; MULT=1.0;
   buildWorld();
@@ -1893,6 +2017,7 @@ function restartGame(){
   document.getElementById('gameover').style.display='none';
   document.getElementById('hud').style.display='block';
   document.getElementById('boostBtn').style.display='block';
+  document.getElementById('fireBtn').style.display='block';
   stickBaseEl.style.display='block';
   STATE.over=false; STATE.started=true;
   DIST=0; MULT=1.0;
@@ -1905,6 +2030,7 @@ function goMenu(){
   document.getElementById('hud').style.display='none';
   document.getElementById('menuBtn').style.display='none';
   document.getElementById('boostBtn').style.display='none';
+  document.getElementById('fireBtn').style.display='none';
   stickBaseEl.style.display='none';
   releaseStick();
   document.getElementById('overlay').style.display='flex';
@@ -1938,6 +2064,7 @@ function gameOver(cause){
     'BEST MULT: <span>x'+MULT.toFixed(2)+'</span>';
   document.getElementById('hud').style.display='none';
   document.getElementById('boostBtn').style.display='none';
+  document.getElementById('fireBtn').style.display='none';
   stickBaseEl.style.display='none';
   releaseStick();
   // Let the explosion play before the panel pops up.
@@ -1954,7 +2081,7 @@ function loop(){
     tickStorm(dt);
   }
   // particles (explosion debris/smoke) keep animating even after crash
-  if(STATE.started){ tickParticles(dt); tickMissiles(dt); }
+  if(STATE.started){ tickParticles(dt); tickMissiles(dt); tickBullets(dt); }
   // persistent shake during crash sequence
   if(STATE.started && STATE.over && H.shake>0){
     H.shake = Math.max(0, H.shake - dt*1.2);
