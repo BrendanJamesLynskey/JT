@@ -1478,17 +1478,20 @@ function applyArcadeLook(){
     stars.renderOrder=-9;
     scene.add(stars);
   }
-  // convert materials
+  // Pre-index OBSTACLES by their root mesh so material conversion is
+  // O(meshes * tree_depth) instead of O(meshes * obstacle_count). The
+  // old nested scan was 20k+ meshes x 1500+ obstacles = hundreds of
+  // millions of ops and effectively froze the tab.
+  const kindByRoot = new Map();
+  for(const ob of OBSTACLES){ if(ob.mesh) kindByRoot.set(ob.mesh, ob.kind); }
   scene.traverse(obj=>{
     if(!obj.isMesh || obj.userData.retroDone) return;
     const m = obj.material;
     if(!m) return;
-    // Find obstacle kind for colour if any ancestor was registered.
+    // Climb the parent chain until we hit a registered obstacle root.
     let kind = null;
-    for(const ob of OBSTACLES){
-      if(ob.mesh===obj || ob.mesh===obj.parent || (ob.mesh&&ob.mesh.children&&ob.mesh.children.indexOf(obj)>=0)){
-        kind = ob.kind; break;
-      }
+    for(let cur=obj; cur; cur=cur.parent){
+      const k = kindByRoot.get(cur); if(k){ kind = k; break; }
     }
     const emissive = m.emissive && ((m.emissiveIntensity||0) > 0.5);
     let nm;
