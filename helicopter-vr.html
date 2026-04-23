@@ -572,22 +572,28 @@ function buildTerrain(){
       colors[k]=Math.min(1,baseR*k2); colors[k+1]=Math.min(1,baseG*k2); colors[k+2]=Math.min(1,baseB*k2);
     }
   }
+  // Build line-only index buffer: cross-section lines (rungs) plus
+  // along-road lines (rails). No triangle edges, no diagonal noise —
+  // just a clean neon grid like Battlezone / Star Wars '83.
   const indices=[];
-  for(let i=0;i<SLICES-1;i++){
+  // rungs (each slice: connect adjacent cross-section samples)
+  for(let i=0;i<SLICES;i++){
     for(let j=0;j<NC-1;j++){
-      const a=i*NC+j, b=i*NC+(j+1), c=(i+1)*NC+j, d=(i+1)*NC+(j+1);
-      indices.push(a,c,b, b,c,d);
+      indices.push(i*NC+j, i*NC+(j+1));
+    }
+  }
+  // rails (each sample: connect adjacent slices)
+  for(let i=0;i<SLICES-1;i++){
+    for(let j=0;j<NC;j++){
+      indices.push(i*NC+j, (i+1)*NC+j);
     }
   }
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
   geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
   geo.setIndex(indices);
-  geo.computeVertexNormals();
-  const mat=new THREE.MeshStandardMaterial({vertexColors:true, flatShading:true, roughness:1.0, metalness:0.0});
-  const m=new THREE.Mesh(geo,mat);
-  m.position.y=0;
-  return m;
+  const mat=new THREE.LineBasicMaterial({vertexColors:true});
+  return new THREE.LineSegments(geo, mat);
 }
 
 // ─── TREES (InstancedMesh) ────────────────────────────────
@@ -1532,6 +1538,12 @@ function applyArcadeLook(){
   }
   const dim = (hex)=> new THREE.Color(hex).multiplyScalar(wx.brightness);
   scene.traverse(obj=>{
+    // Terrain is already a LineSegments with palette-banded vertex
+    // colours — just multiply its material.color by the weather dim.
+    if(obj===terrain && obj.material && obj.material.color){
+      obj.material.color.setScalar(wx.brightness);
+      return;
+    }
     if(!obj.isMesh || obj.userData.retroDone) return;
     const m = obj.material;
     if(!m) return;
@@ -1546,9 +1558,6 @@ function applyArcadeLook(){
       const col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15);
       col.multiplyScalar(wx.brightness);
       nm = new THREE.MeshBasicMaterial({color:col});
-    } else if(obj===terrain){
-      // keep the per-slice palette-banded vertex colours; just wireframe it.
-      nm = new THREE.MeshBasicMaterial({ vertexColors:true, wireframe:true, color:new THREE.Color(0xffffff).multiplyScalar(wx.brightness) });
     } else if(obj===roadObj){
       nm = new THREE.MeshBasicMaterial({ color:dim(ROAD_COLOR), wireframe:true });
     } else if(rootHex!=null){
