@@ -560,13 +560,14 @@ function buildTerrain(){
       const y = valleyY(baseY, d, x, z);
       const k=(i*NC+j)*3;
       positions[k]=x; positions[k+1]=y; positions[k+2]=z;
-      // Brighten floor, darken high walls slightly for contrast
+      // Terrain is deliberately dim so bright neon obstacles pop against
+      // it. Floor ~0.55, walls drop to ~0.20 at the rim.
       const h = y - baseY;
       const ad = Math.abs(d);
-      const floorBoost = ad < 16 ? 1.25 : 1.0;
-      const heightDim  = Math.max(0.55, 1.0 - Math.max(0, h-30)/80);
-      const ao = 0.85 + (Math.sin(x*0.11 + z*0.08)*0.5+0.5)*0.15;
-      const k2 = floorBoost * heightDim * ao;
+      const dim = ad < 16 ? 0.55
+                 : Math.max(0.18, 0.55 - (ad-16)*0.012);
+      const ao = 0.9 + (Math.sin(x*0.11 + z*0.08)*0.5+0.5)*0.10;
+      const k2 = dim * ao;
       colors[k]=Math.min(1,baseR*k2); colors[k+1]=Math.min(1,baseG*k2); colors[k+2]=Math.min(1,baseB*k2);
     }
   }
