@@ -370,17 +370,28 @@ function hashFloat(i){ const s=Math.sin(i*12.9898)*43758.5453; return s-Math.flo
 // terrain ground level at world (x,z). Valley along road centre.
 let ROAD; // filled below
 function groundY(x,z){
-  let y = pnoise(x,z);
-  // carve a gentle valley near the road centreline
-  if(ROAD){
-    const d2 = ROAD.distSqTo(x,z);
-    const valleyR = 90;
-    if(d2 < valleyR*valleyR){
-      const t = 1 - Math.sqrt(d2)/valleyR;
-      y -= 6*t*t;
-    }
+  // Arcade valley: flat floor near the road, steep walls rising on either
+  // side, noisy peaks far off. The road Y sets the floor height at that
+  // point so the valley follows the road's vertical undulation.
+  const nr = roadNearest(x,z);
+  const d = Math.sqrt(nr.d2);
+  const baseY = nr.py;
+  const FLOOR_R = 22;   // flat valley floor radius
+  const WALL_R  = 70;   // where we reach cliff height
+  let valleyY;
+  if(d < FLOOR_R){
+    valleyY = baseY - 1.2;
+  } else if(d < WALL_R){
+    const t = (d - FLOOR_R) / (WALL_R - FLOOR_R);
+    const e = t*t*(3 - 2*t); // smoothstep
+    valleyY = baseY - 1.2 + e * 38;
+  } else {
+    valleyY = baseY - 1.2 + 38 + (d - WALL_R) * 0.42;
   }
-  return y;
+  // add surface noise — tiny on floor, large on walls
+  const wallMix = Math.min(1, Math.max(0, (d - FLOOR_R) / 50));
+  const n = pnoise(x,z);
+  return valleyY + n * (0.15 + 1.1 * wallMix);
 }
 
 // ─── ROAD SPLINE ─────────────────────────────────────────────
@@ -459,22 +470,23 @@ function sampleRoadPolyline(spline, n=900){
   return arr;
 }
 let ROADPTS=[];
-function roadDistSq(x,z){
-  let best=Infinity;
-  // coarse — sample every 4th point first
-  let bestI=0;
+function roadNearest(x,z){
+  // Returns the nearest road polyline sample: {d2, px,py,pz, idx}
+  if(ROADPTS.length===0) return {d2:1e9, px:0, py:0, pz:0, idx:0};
+  let best=Infinity, bestI=0;
   for(let i=0;i<ROADPTS.length;i+=6){
     const p=ROADPTS[i]; const dx=p.x-x, dz=p.z-z; const d=dx*dx+dz*dz;
     if(d<best){best=d; bestI=i;}
   }
-  // refine window
   const s=Math.max(0,bestI-6), e=Math.min(ROADPTS.length-1,bestI+6);
   for(let i=s;i<=e;i++){
     const p=ROADPTS[i]; const dx=p.x-x, dz=p.z-z; const d=dx*dx+dz*dz;
-    if(d<best)best=d;
+    if(d<best){best=d; bestI=i;}
   }
-  return best;
+  const bp = ROADPTS[bestI];
+  return {d2:best, px:bp.x, py:bp.y, pz:bp.z, idx:bestI};
 }
+function roadDistSq(x,z){ return roadNearest(x,z).d2; }
 
 // ─── TERRAIN ─────────────────────────────────────────────────
 let terrain;
@@ -783,6 +795,10 @@ function buildHeli(){
   tailDisk.rotation.z=Math.PI/2;
   g.add(tailDisk);
   tailRotor=tailDisk;
+  // Arcade cockpit: hide rotor visuals so the player sees only the world.
+  mainRotor.visible=false;
+  tailRotor.visible=false;
+  if(mainRotor.userData.blades){ mainRotor.userData.blades.forEach(b=>b.visible=false); }
   heli=g;
   scene.add(g);
 }
@@ -899,6 +915,109 @@ document.addEventListener('click', e=>{
   }
 });
 
+// ─── EXPLOSIONS ────────────────────────────────────────────
+// Billboard fireball + smoke + debris. Particles are recycled.
+let EXPL_TEX=null, SMOKE_TEX=null;
+function makeFireballTexture(){
+  const s=128, cv=document.createElement('canvas'); cv.width=s; cv.height=s;
+  const g=cv.getContext('2d');
+  const grd=g.createRadialGradient(s/2,s/2,0, s/2,s/2,s/2);
+  grd.addColorStop(0.0, 'rgba(255,255,220,1)');
+  grd.addColorStop(0.25,'rgba(255,210,80,1)');
+  grd.addColorStop(0.55,'rgba(255,100,30,0.8)');
+  grd.addColorStop(0.85,'rgba(160,40,10,0.2)');
+  grd.addColorStop(1.0, 'rgba(0,0,0,0)');
+  g.fillStyle=grd; g.fillRect(0,0,s,s);
+  const t=new THREE.CanvasTexture(cv); t.needsUpdate=true; return t;
+}
+function makeSmokeTexture(){
+  const s=128, cv=document.createElement('canvas'); cv.width=s; cv.height=s;
+  const g=cv.getContext('2d');
+  const grd=g.createRadialGradient(s/2,s/2,0, s/2,s/2,s/2);
+  grd.addColorStop(0.0, 'rgba(60,60,60,0.9)');
+  grd.addColorStop(0.5, 'rgba(40,40,40,0.55)');
+  grd.addColorStop(1.0, 'rgba(0,0,0,0)');
+  g.fillStyle=grd; g.fillRect(0,0,s,s);
+  const t=new THREE.CanvasTexture(cv); t.needsUpdate=true; return t;
+}
+const PARTICLES=[]; // {sprite, vel, life, maxLife, scaleRate, kind}
+function spawnFireball(pos, size, life, vel){
+  const mat=new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending});
+  const sp=new THREE.Sprite(mat);
+  sp.scale.set(size,size,size);
+  sp.position.copy(pos);
+  scene.add(sp);
+  PARTICLES.push({sprite:sp, vel:vel.clone(), life:life, maxLife:life, scaleRate:size*3.0, kind:'fire'});
+}
+function spawnSmoke(pos, size, life, vel){
+  const mat=new THREE.SpriteMaterial({map:SMOKE_TEX, transparent:true, depthWrite:false, color:0x444444});
+  const sp=new THREE.Sprite(mat);
+  sp.scale.set(size,size,size);
+  sp.position.copy(pos);
+  scene.add(sp);
+  PARTICLES.push({sprite:sp, vel:vel.clone(), life:life, maxLife:life, scaleRate:size*0.9, kind:'smoke'});
+}
+function spawnDebris(pos, vel){
+  const geo=new THREE.BoxGeometry(0.7,0.3,0.7);
+  const mat=new THREE.MeshBasicMaterial({color:0x222222});
+  const m=new THREE.Mesh(geo,mat);
+  m.position.copy(pos);
+  scene.add(m);
+  PARTICLES.push({sprite:m, vel:vel.clone(), life:2.4, maxLife:2.4, scaleRate:0, kind:'debris',
+    spin:new THREE.Vector3((Math.random()-0.5)*10,(Math.random()-0.5)*10,(Math.random()-0.5)*10)});
+}
+function explosionBurst(pos, scale){
+  if(!EXPL_TEX){ EXPL_TEX=makeFireballTexture(); SMOKE_TEX=makeSmokeTexture(); }
+  scale = scale || 1;
+  // core fireball
+  spawnFireball(pos, 10*scale, 0.7, new THREE.Vector3(0,2*scale,0));
+  // secondary flashes
+  for(let i=0;i<6;i++){
+    const dir=new THREE.Vector3((Math.random()-0.5)*2, Math.random()*1.5, (Math.random()-0.5)*2);
+    dir.normalize().multiplyScalar((4+Math.random()*6)*scale);
+    spawnFireball(pos, (3+Math.random()*3)*scale, 0.5+Math.random()*0.4, dir);
+  }
+  // smoke plumes
+  for(let i=0;i<5;i++){
+    const dir=new THREE.Vector3((Math.random()-0.5)*1.5, 1+Math.random()*1.5, (Math.random()-0.5)*1.5);
+    dir.multiplyScalar(2*scale);
+    spawnSmoke(pos, (5+Math.random()*4)*scale, 1.8+Math.random()*1.2, dir);
+  }
+  // debris
+  for(let i=0;i<10;i++){
+    const dir=new THREE.Vector3((Math.random()-0.5)*2, 0.8+Math.random()*1.4, (Math.random()-0.5)*2);
+    dir.multiplyScalar((8+Math.random()*10)*scale);
+    spawnDebris(pos, dir);
+  }
+}
+function tickParticles(dt){
+  for(let i=PARTICLES.length-1;i>=0;i--){
+    const p=PARTICLES[i];
+    p.life -= dt;
+    p.sprite.position.addScaledVector(p.vel, dt);
+    if(p.kind==='debris'){
+      p.vel.y -= 18*dt;
+      p.sprite.rotation.x += p.spin.x*dt;
+      p.sprite.rotation.y += p.spin.y*dt;
+      p.sprite.rotation.z += p.spin.z*dt;
+    } else {
+      // inflate
+      const s=p.sprite.scale.x + p.scaleRate*dt;
+      p.sprite.scale.set(s,s,s);
+      p.vel.multiplyScalar(1 - 1.2*dt);
+      if(p.kind==='smoke'){ p.vel.y += 0.8*dt; }
+      const a = Math.max(0, p.life/p.maxLife);
+      p.sprite.material.opacity = a * (p.kind==='smoke'?0.7:1.0);
+    }
+    if(p.life<=0){
+      scene.remove(p.sprite);
+      if(p.sprite.material && p.kind!=='debris') p.sprite.material.dispose();
+      if(p.sprite.geometry) p.sprite.geometry.dispose && p.sprite.geometry.dispose();
+      PARTICLES.splice(i,1);
+    }
+  }
+}
+
 // Boost button
 const boostEl=document.getElementById('boostBtn');
 ['pointerdown','pointermove'].forEach(ev=>{
@@ -966,6 +1085,10 @@ function buildWorld(){
   while(OBSTACLES.length){
     const o=OBSTACLES.pop();
     scene.remove(o.mesh);
+  }
+  // clear leftover particles from prior run
+  while(PARTICLES.length){
+    const p=PARTICLES.pop(); scene.remove(p.sprite);
   }
   if(terrain){scene.remove(terrain); terrain.geometry.dispose(); terrain.material.dispose(); terrain=null;}
   if(treesA){scene.remove(treesA); treesA.geometry.dispose(); treesA.material.dispose(); treesA=null;}
@@ -1073,24 +1196,28 @@ function step(dt){
   H.boost = Math.max(0, Math.min(1, H.boost));
   const boostF = 1 + H.boost*0.55;
 
-  // Desired roll / pitch from input, with auto-level pulling toward 0
-  const targetRoll  = IN.roll  *  0.75; // ~43° max bank
-  const targetPitch = IN.pitch *  0.45; // gentle climb/dive
-  // Smooth, snappy response
-  const rollLerp  = 1 - Math.exp(-dt*6.0);
-  const pitchLerp = 1 - Math.exp(-dt*5.0);
+  // Arcade steering — amplify small inputs (expo curve) so a tiny nudge
+  // gives a real turn, and auto-level hard when the stick is released.
+  const expo = v => Math.sign(v) * Math.pow(Math.abs(v), 0.65);
+  const rollIn  = expo(IN.roll);
+  const pitchIn = expo(IN.pitch);
+  const targetRoll  = rollIn  * 0.85;  // ~49° max bank
+  const targetPitch = pitchIn * 0.50;
+  // Very snappy response
+  const rollLerp  = 1 - Math.exp(-dt*9.0);
+  const pitchLerp = 1 - Math.exp(-dt*7.0);
   H.ang.z += ((-targetRoll)  - H.ang.z) * rollLerp;
   H.ang.x += (( targetPitch) - H.ang.x) * pitchLerp;
-  // Auto-level: if no input, pull toward 0
-  if(Math.abs(IN.roll)<0.05)  H.ang.z *= (1 - Math.min(1,dt*1.8));
-  if(Math.abs(IN.pitch)<0.05) H.ang.x *= (1 - Math.min(1,dt*1.5));
+  // Auto-level: if no input, snap back toward 0 quickly
+  if(Math.abs(IN.roll)<0.08)  H.ang.z *= (1 - Math.min(1,dt*4.0));
+  if(Math.abs(IN.pitch)<0.08) H.ang.x *= (1 - Math.min(1,dt*3.0));
 
   // Rebuild orientation from heading + current roll/pitch
   // Extract current heading (yaw)
   const cur = new THREE.Euler().setFromQuaternion(H.quat,'YXZ');
   let yaw = cur.y;
-  // Bank-to-turn: bank angle yields yaw rate
-  const turnRate = -H.ang.z * 1.6; // rad/s
+  // Bank-to-turn: bank angle yields yaw rate (arcade: generous turn gain)
+  const turnRate = -H.ang.z * 2.4; // rad/s
   yaw += turnRate * dt;
   // Recompose
   H.quat.setFromEuler(new THREE.Euler(H.ang.x, yaw, H.ang.z, 'YXZ'));
@@ -1104,8 +1231,8 @@ function step(dt){
   const diffSpd = STATE.diff==='recon' ? 38 : STATE.diff==='hot' ? 58 : 48;
   const cruise  = diffSpd * boostF;
   const targetVel = forwardTmp.clone().multiplyScalar(cruise);
-  // Climb/dive overlay from pitch
-  const climb = H.ang.x * 14.0;          // m/s
+  // Climb/dive overlay from pitch (arcade: strong altitude authority)
+  const climb = H.ang.x * 22.0;          // m/s
   targetVel.y += climb;
 
   // Ease current velocity toward target — arcade: no inertia struggle
@@ -1202,6 +1329,8 @@ function damageShield(cause){
   H.shake += 0.8;
   // brief red flash on the HUD
   const f=document.getElementById('damvign'); if(f){ f.style.opacity='1'; setTimeout(()=>{f.style.opacity='0';},220); }
+  // small hit-spark at the helicopter position
+  explosionBurst(H.pos.clone(), 0.4);
   if(H.shield<=0){
     H.alive=false; gameOver(cause);
   } else {
@@ -1536,6 +1665,12 @@ const QUIPS={
 function gameOver(cause){
   STATE.over=true;
   crashBoom();
+  // Big fireball slightly ahead of the cockpit so we see it expand.
+  const crashPos = H.pos.clone();
+  const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(H.quat);
+  crashPos.addScaledVector(fwd, 6);
+  explosionBurst(crashPos, 1.6);
+  H.shake = 3.5;
   const t=(performance.now()/1000 - H.startT);
   document.getElementById('goquip').textContent = QUIPS[cause] || 'Crashed.';
   document.getElementById('gostats').innerHTML =
@@ -1543,9 +1678,10 @@ function gameOver(cause){
     'DIST: <span>'+Math.round(DIST)+' m</span><br>'+
     'TIME: <span>'+t.toFixed(1)+' s</span><br>'+
     'BEST MULT: <span>x'+MULT.toFixed(2)+'</span>';
-  document.getElementById('gameover').style.display='flex';
   document.getElementById('hud').style.display='none';
   document.getElementById('boostBtn').style.display='none';
+  // Let the explosion play before the panel pops up.
+  setTimeout(()=>{ if(STATE.over) document.getElementById('gameover').style.display='flex'; }, 1500);
   if(rotorGain && AC){ rotorGain.gain.setTargetAtTime(0, AC.currentTime, 0.2); }
   if(document.pointerLockElement && document.exitPointerLock){ document.exitPointerLock(); }
 }
@@ -1557,8 +1693,17 @@ function loop(){
   if(STATE.started && !STATE.over){
     step(dt);
     tickStorm(dt);
-    // cull far obstacles (opacity)
-    // left as-is; fog handles depth cueing
+  }
+  // particles (explosion debris/smoke) keep animating even after crash
+  if(STATE.started){ tickParticles(dt); }
+  // persistent shake during crash sequence
+  if(STATE.started && STATE.over && H.shake>0){
+    H.shake = Math.max(0, H.shake - dt*1.2);
+    const shk = Math.min(0.08, H.shake*0.04);
+    const ce = new THREE.Euler().setFromQuaternion(camera.quaternion,'YXZ');
+    ce.z += (Math.random()-0.5)*shk;
+    ce.x += (Math.random()-0.5)*shk*0.6;
+    camera.quaternion.setFromEuler(ce);
   }
   if(STATE.started){
     document.getElementById('distv').textContent = Math.round(DIST);
