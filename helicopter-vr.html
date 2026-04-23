@@ -536,12 +536,23 @@ function buildTerrain(){
   const positions=new Float32Array(SLICES*NC*3);
   const colors=new Float32Array(SLICES*NC*3);
   const up=new THREE.Vector3(0,1,0), bin=new THREE.Vector3();
+  const palN = TERRAIN_PALETTE.length;
   for(let i=0;i<SLICES;i++){
     const t = i/(SLICES-1);
     const p = spline.getPointAt(t);
     const tg = spline.getTangentAt(t).normalize();
     bin.crossVectors(up,tg).normalize();
     const baseY=p.y, sx=p.x, sz=p.z;
+    // Smoothly blend between palette bands as you travel along the road.
+    const bf = (i/TERRAIN_BAND_SLICES);
+    const ii = Math.floor(bf) % palN;
+    const ni = (ii+1) % palN;
+    const fr = bf - Math.floor(bf);
+    const ease = fr*fr*(3-2*fr);
+    const c1 = TERRAIN_PALETTE[ii], c2 = TERRAIN_PALETTE[ni];
+    const baseR = c1[0]*(1-ease) + c2[0]*ease;
+    const baseG = c1[1]*(1-ease) + c2[1]*ease;
+    const baseB = c1[2]*(1-ease) + c2[2]*ease;
     for(let j=0;j<NC;j++){
       const d=DS[j];
       const x = sx + bin.x*d;
@@ -549,15 +560,14 @@ function buildTerrain(){
       const y = valleyY(baseY, d, x, z);
       const k=(i*NC+j)*3;
       positions[k]=x; positions[k+1]=y; positions[k+2]=z;
-      // colour by height relative to baseY
-      const h=y-baseY;
-      let r,g,b;
-      if(h<2){ r=0.23;g=0.45;b=0.22; }
-      else if(h<10){ const tt=(h-2)/8; r=0.23+tt*0.22; g=0.45-tt*0.13; b=0.22-tt*0.02; }
-      else if(h<18){ const tt=(h-10)/8; r=0.45+tt*0.15; g=0.32+tt*0.05; b=0.2+tt*0.05; }
-      else { const tt=Math.min(1,(h-18)/6); r=0.6+tt*0.35; g=0.55+tt*0.4; b=0.52+tt*0.45; }
-      const ao=0.82+(Math.sin(x*0.12+z*0.09)*0.5+0.5)*0.18;
-      colors[k]=r*ao; colors[k+1]=g*ao; colors[k+2]=b*ao;
+      // Brighten floor, darken high walls slightly for contrast
+      const h = y - baseY;
+      const ad = Math.abs(d);
+      const floorBoost = ad < 16 ? 1.25 : 1.0;
+      const heightDim  = Math.max(0.55, 1.0 - Math.max(0, h-30)/80);
+      const ao = 0.85 + (Math.sin(x*0.11 + z*0.08)*0.5+0.5)*0.15;
+      const k2 = floorBoost * heightDim * ao;
+      colors[k]=Math.min(1,baseR*k2); colors[k+1]=Math.min(1,baseG*k2); colors[k+2]=Math.min(1,baseB*k2);
     }
   }
   const indices=[];
@@ -1439,18 +1449,32 @@ function buildWorld(){
 }
 
 // ─── ARCADE / VECTOR LOOK ──────────────────────────────────
-// Per-kind colours — stay vivid and distinct across every TOD. The
-// identity of a pylon vs. a turret vs. a building is always readable.
-const KIND_COLOR = {
-  terrain: 0x22ff66,
-  road:    0xffffff,
-  pylon:   0x44e0ff,   // cyan
-  arch:    0xffdd22,   // yellow
-  bldg:    0xff55aa,   // hot pink
-  turret:  0xff3a3a,   // red
-  cable:   0xcccccc,   // grey
-  balloon: 0xff9966,   // peach
+// Per-kind palettes — every obstacle instance picks a random colour
+// from its palette, so a row of pylons is cyan/teal/aqua/turquoise
+// rather than five identical cyan copies. Each kind keeps a consistent
+// mood (pylons cool, turrets red, etc.) while the scene gets variety.
+const KIND_PALETTE = {
+  pylon:   [0x44e0ff, 0x00ffff, 0x66ffdd, 0x33ccff, 0xaaffff, 0x00ccaa],
+  arch:    [0xffdd22, 0xffaa33, 0xff7722, 0xffee88, 0xffcc00, 0xffbb55],
+  bldg:    [0xff55aa, 0xff33cc, 0xcc66ff, 0xff77dd, 0x9944ff, 0xff3388],
+  turret:  [0xff3a3a, 0xff0055, 0xff5500, 0xff2222, 0xff6633, 0xcc0033],
+  cable:   [0xcccccc, 0xaaaaaa, 0xddddee, 0xbbccbb],
+  balloon: [0xff9966, 0xff4488, 0x66ff99, 0xffcc33, 0x99aaff, 0xff66ff, 0xffaa44, 0x55ffdd],
 };
+const ROAD_COLOR = 0xffffff;
+// Trench walls cycle through a palette as you fly along the road so the
+// valley doesn't look like one endless green tube.
+const TERRAIN_PALETTE = [
+  [0.13,1.00,0.40], // neon green
+  [0.20,0.80,1.00], // neon blue
+  [1.00,0.60,0.20], // orange
+  [1.00,0.25,0.55], // hot pink
+  [0.70,0.30,1.00], // purple
+  [1.00,0.85,0.20], // yellow
+  [0.25,1.00,0.95], // cyan
+  [1.00,0.40,0.30], // coral
+];
+const TERRAIN_BAND_SLICES = 60; // slices per colour band (~6.6 km at step 110)
 // Time of day controls only the sky void, fog colour/density and star
 // colour — not the wireframe palette. This keeps the scene colourful.
 const ARCADE_TOD = {
@@ -1493,38 +1517,44 @@ function applyArcadeLook(){
     stars.renderOrder=-9;
     scene.add(stars);
   }
-  // Obstacle colours stay identical across TODs — only overall brightness
-  // is scaled by weather so storm feels genuinely dim.
-  const dim = (hex)=>{
-    const c = new THREE.Color(hex);
-    c.multiplyScalar(wx.brightness);
-    return c;
-  };
+  // Pre-assign a palette colour to each obstacle's root mesh so every
+  // child inherits it — a row of pylons becomes cyan/teal/aqua instead
+  // of five identical copies.
+  const colorByRoot = new Map();
   const kindByRoot = new Map();
-  for(const ob of OBSTACLES){ if(ob.mesh) kindByRoot.set(ob.mesh, ob.kind); }
+  for(const ob of OBSTACLES){
+    if(!ob.mesh) continue;
+    kindByRoot.set(ob.mesh, ob.kind);
+    const pal = KIND_PALETTE[ob.kind];
+    if(pal) colorByRoot.set(ob.mesh, pal[Math.floor(Math.random()*pal.length)]);
+  }
+  const dim = (hex)=> new THREE.Color(hex).multiplyScalar(wx.brightness);
   scene.traverse(obj=>{
     if(!obj.isMesh || obj.userData.retroDone) return;
     const m = obj.material;
     if(!m) return;
-    let kind = null;
+    // Walk up the parent chain to find the obstacle root + its colour.
+    let kind=null, rootHex=null;
     for(let cur=obj; cur; cur=cur.parent){
-      const k = kindByRoot.get(cur); if(k){ kind = k; break; }
+      const k = kindByRoot.get(cur); if(k){ kind=k; rootHex=colorByRoot.get(cur); break; }
     }
     const emissive = m.emissive && ((m.emissiveIntensity||0) > 0.5);
     let nm;
     if(emissive){
-      // solid bright blob (missiles, pickups) — keep the original emissive hue
       const col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15);
       col.multiplyScalar(wx.brightness);
       nm = new THREE.MeshBasicMaterial({color:col});
+    } else if(obj===terrain){
+      // keep the per-slice palette-banded vertex colours; just wireframe it.
+      nm = new THREE.MeshBasicMaterial({ vertexColors:true, wireframe:true, color:new THREE.Color(0xffffff).multiplyScalar(wx.brightness) });
+    } else if(obj===roadObj){
+      nm = new THREE.MeshBasicMaterial({ color:dim(ROAD_COLOR), wireframe:true });
+    } else if(rootHex!=null){
+      nm = new THREE.MeshBasicMaterial({ color:dim(rootHex), wireframe:true });
+    } else if(m.color){
+      nm = new THREE.MeshBasicMaterial({ color:m.color.clone().multiplyScalar(wx.brightness), wireframe:true });
     } else {
-      let col;
-      if(kind && KIND_COLOR[kind]!=null)      col = dim(KIND_COLOR[kind]);
-      else if(obj===terrain)                  col = dim(KIND_COLOR.terrain);
-      else if(obj===roadObj)                  col = dim(KIND_COLOR.road);
-      else if(m.color)                        col = m.color.clone().multiplyScalar(wx.brightness);
-      else                                    col = dim(0x88ffaa);
-      nm = new THREE.MeshBasicMaterial({ color:col, wireframe:true });
+      nm = new THREE.MeshBasicMaterial({ color:dim(0x88ffaa), wireframe:true });
     }
     obj.userData.retroDone = true;
     obj.material = nm;
