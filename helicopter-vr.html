@@ -770,6 +770,27 @@ function placeBalloon(p){
   return g;
 }
 
+// Pickup: a glowing green ring the pilot flies through to restore life.
+function placePickup(worldX, worldY, worldZ, tang){
+  const g=new THREE.Group();
+  const torusGeo=new THREE.TorusGeometry(2.2, 0.35, 10, 28);
+  const torusMat=new THREE.MeshStandardMaterial({color:0x33ff88, emissive:0x22ff77, emissiveIntensity:1.4, roughness:0.4});
+  const ring=new THREE.Mesh(torusGeo, torusMat);
+  g.add(ring);
+  // additive halo sprite
+  if(!EXPL_TEX){ EXPL_TEX=makeFireballTexture(); SMOKE_TEX=makeSmokeTexture(); }
+  const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, color:0x66ffaa}));
+  halo.scale.set(6,6,6);
+  g.add(halo);
+  g.position.set(worldX, worldY, worldZ);
+  // orient ring so its axis lies along road tangent — you fly THROUGH it
+  g.rotation.y = Math.atan2(tang.x, tang.z);
+  scene.add(g);
+  OBSTACLES.push({mesh:g, kind:'pickup', pos:new THREE.Vector3(worldX, worldY, worldZ), r:3.4,
+    phase:Math.random()*Math.PI*2, ring:ring, halo:halo, collected:false});
+  return g;
+}
+
 function placeTurret(worldX, worldY, worldZ, tang, side){
   const g=new THREE.Group();
   const mat=new THREE.MeshStandardMaterial({color:0x333840, roughness:0.7, metalness:0.3});
@@ -880,6 +901,20 @@ function populateObstacles(spline){
     const y=groundY(x,z)+15+Math.random()*22;
     placeBalloon({x,y,z});
   }
+  // life pickups — bright green rings on the flight path
+  const pickStep = 320;
+  for(let d=180; d<len-60; d+=pickStep + Math.random()*140){
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t).normalize();
+    const nx=-tang.z, nz=tang.x;
+    const side=Math.random()<0.5?-1:1;
+    const lat=(Math.random()*0.8)*side*6; // 0..4.8 m off centre
+    const x=p.x + nx*lat;
+    const z=p.z + nz*lat;
+    const y=p.y + 10 + Math.random()*18; // cruise altitude band
+    placePickup(x,y,z, tang);
+  }
 }
 
 // ─── HELICOPTER (for cockpit view we still build one for rotor/tail visuals) ─
@@ -930,7 +965,7 @@ const H = {
   alive:true,
   startT:0,
   // arcade: shield absorbs hits; short invuln window after hit
-  shield:5, maxShield:5, invuln:0,
+  life:1.0, maxLife:1.0, invuln:0,
   // camera shake accumulator
   shake:0,
 };
@@ -953,7 +988,7 @@ function resetHeli(){
   }
   H.ang.set(0,0,0);
   H.throttle=0.6; H.boost=0; H.alive=true;
-  H.shield=H.maxShield; H.invuln=0; H.shake=0;
+  H.life=H.maxLife; H.invuln=0; H.shake=0;
   H.startT = performance.now()/1000;
   H.bestT = 0;
 }
@@ -1460,14 +1495,39 @@ function step(dt){
   camEul.x += (Math.random()-0.5)*shk*0.6;
   camera.quaternion.setFromEuler(camEul);
 
-  // balloon drift & bob + turret firing
+  // balloon drift & bob + turret firing + pickup animation/collection
   const diffCD = STATE.diff==='recon'?1.6 : STATE.diff==='hot'?0.65 : 1.0;
-  for(let i=0;i<OBSTACLES.length;i++){
+  const tNow = performance.now()*0.001;
+  for(let i=OBSTACLES.length-1;i>=0;i--){
     const o=OBSTACLES[i];
     if(o.kind==='balloon'){
       o.mesh.position.x += o.mesh.userData.drift*dt;
       o.mesh.position.y += Math.sin(performance.now()*0.0009 + o.mesh.userData.bobPhase)*dt*0.6;
       o.pos.copy(o.mesh.position);
+    } else if(o.kind==='pickup' && !o.collected){
+      // spin + bob
+      o.ring.rotation.z += dt*1.6;
+      o.ring.rotation.x += dt*0.4;
+      const bob = Math.sin(tNow*2 + o.phase)*0.5;
+      o.mesh.position.y = o.pos.y + bob;
+      // pulse halo
+      const pulse = 1 + 0.25*Math.sin(tNow*4 + o.phase);
+      o.halo.scale.set(6*pulse, 6*pulse, 6*pulse);
+      // fly-through collection
+      const dx=H.pos.x-o.mesh.position.x, dy=H.pos.y-o.mesh.position.y, dz=H.pos.z-o.mesh.position.z;
+      if(dx*dx+dy*dy+dz*dz < (o.r+2.2)*(o.r+2.2)){
+        o.collected=true;
+        grantLife(0.30);
+        // sparkle burst
+        for(let k=0;k<6;k++){
+          const v=new THREE.Vector3((Math.random()-0.5)*6, Math.random()*3, (Math.random()-0.5)*6);
+          spawnFireball(o.mesh.position.clone(), 2.2+Math.random()*1.4, 0.5+Math.random()*0.3, v);
+        }
+        scene.remove(o.mesh);
+        o.ring.geometry.dispose(); o.ring.material.dispose();
+        o.halo.material.dispose();
+        OBSTACLES.splice(i,1);
+      }
     } else if(o.kind==='turret' && o.active){
       const dx=H.pos.x-o.pos.x, dz=H.pos.z-o.pos.z;
       const d2=dx*dx+dz*dz;
@@ -1495,26 +1555,42 @@ function step(dt){
 }
 
 // Shield damage on a non-fatal hit. When shield runs out, it's game over.
-function damageShield(cause){
+// Damage amounts per hit source (fraction of full life).
+const DMG = { TERRAIN:0.15, MISSILE:0.20, PYLON:0.28, ARCH:0.28, BLDG:0.28, TURRET:0.22, CABLE:0.22, BALLOON:0.15 };
+function damageLife(cause){
   if(H.invuln>0 || !H.alive) return;
-  H.shield -= 1;
-  H.invuln = 1.2;
-  H.shake += 0.8;
-  // brief red flash on the HUD
+  const amt = DMG[cause] != null ? DMG[cause] : 0.22;
+  H.life = Math.max(0, H.life - amt);
+  H.invuln = 1.0;
+  H.shake += 0.7 + amt*1.5;
   const f=document.getElementById('damvign'); if(f){ f.style.opacity='1'; setTimeout(()=>{f.style.opacity='0';},220); }
-  // small hit-spark at the helicopter position
-  explosionBurst(H.pos.clone(), 0.4);
-  if(H.shield<=0){
+  explosionBurst(H.pos.clone(), 0.3 + amt*0.6);
+  if(H.life<=0){
     H.alive=false; gameOver(cause);
-  } else {
-    if(AC && rotorGain){
-      const o=AC.createOscillator(); const g=AC.createGain();
-      o.type='square'; o.frequency.setValueAtTime(220, AC.currentTime);
-      o.frequency.exponentialRampToValueAtTime(80, AC.currentTime+0.2);
-      g.gain.setValueAtTime(0.25, AC.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+0.25);
-      o.connect(g); g.connect(masterGain); o.start(); o.stop(AC.currentTime+0.26);
-    }
+  } else if(AC && rotorGain){
+    const o=AC.createOscillator(); const g=AC.createGain();
+    o.type='square'; o.frequency.setValueAtTime(220, AC.currentTime);
+    o.frequency.exponentialRampToValueAtTime(80, AC.currentTime+0.2);
+    g.gain.setValueAtTime(0.25, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+0.25);
+    o.connect(g); g.connect(masterGain); o.start(); o.stop(AC.currentTime+0.26);
+  }
+}
+// Back-compat alias so any older call sites still work.
+const damageShield = damageLife;
+
+function grantLife(amount){
+  if(!H.alive) return;
+  H.life = Math.min(H.maxLife, H.life + amount);
+  // cheerful pickup chime
+  if(AC && masterGain){
+    const t=AC.currentTime;
+    const o=AC.createOscillator(); const g=AC.createGain();
+    o.type='triangle'; o.frequency.setValueAtTime(660, t);
+    o.frequency.exponentialRampToValueAtTime(1320, t+0.18);
+    g.gain.setValueAtTime(0.18, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t+0.28);
+    o.connect(g); g.connect(masterGain); o.start(); o.stop(t+0.30);
   }
 }
 
@@ -1589,14 +1665,14 @@ function drawCockpitAndHUD(){
   // Attitude indicator (centre)
   drawADI(ix, iy, 62, pitchDeg, rollDeg);
   // Airspeed tape (left)
-  drawTape(w*0.22, iy, 140, 60, spd, 0, 100, 'KIAS', Math.round(spd));
+  drawTape(w*0.22, iy, 140, 60, spd, 0, 100, 'SPEED', Math.round(spd));
   // Altitude tape (right)
-  drawTape(w*0.78, iy, 140, 60, Math.max(0,alt), 0, 300, 'AGL', Math.round(alt));
+  drawTape(w*0.78, iy, 140, 60, Math.max(0,alt), 0, 300, 'ALT', Math.round(alt));
   // Heading tape (top centre below canopy)
   drawHeading(w*0.5, h*0.19, 280, yawDeg);
 
   // shield pips + boost bar
-  drawShieldAndBoost(w*0.13, iy, H.shield, H.maxShield, H.boost);
+  drawLifeAndBoost(w*0.13, iy, H.life, H.maxLife, H.boost);
   // radial speed streaks — reinforce sense of motion
   drawSpeedStreaks(spd, H.boost);
   // invuln flash (short periodic alpha wash after a hit)
@@ -1701,35 +1777,44 @@ function drawHeading(cx,cy,w,deg){
   hudCtx.beginPath(); hudCtx.moveTo(0,-18); hudCtx.lineTo(0,14); hudCtx.stroke();
   hudCtx.restore();
 }
-function drawShieldAndBoost(cx,cy,shield,maxShield,boost){
+function drawLifeAndBoost(cx,cy,life,maxLife,boost){
   hudCtx.save();
   hudCtx.translate(cx,cy);
-  // SHIELD pips (vertical stack)
+  // LIFE bar (vertical, fills from bottom, colour shifts green→amber→red)
+  const frac = Math.max(0, Math.min(1, life/maxLife));
   hudCtx.fillStyle='#8fffaa';
   hudCtx.font='9px "Share Tech Mono"';
   hudCtx.textAlign='center';
-  hudCtx.fillText('SHIELD', 0, -44);
-  for(let i=0;i<maxShield;i++){
-    // compact pip layout so larger shield counts still fit neatly
-    const y = -34 + i*12;
-    const on = (maxShield-1-i) < shield;
-    hudCtx.fillStyle = on ? '#4fdd77' : 'rgba(60,100,70,0.35)';
-    hudCtx.fillRect(-10, y, 20, 9);
-    hudCtx.strokeStyle='rgba(120,255,160,0.6)';
-    hudCtx.lineWidth=1;
-    hudCtx.strokeRect(-10, y, 20, 9);
-  }
+  hudCtx.fillText('LIFE', 0, -44);
+  hudCtx.fillStyle='rgba(0,10,5,0.6)';
+  hudCtx.fillRect(-10, -36, 20, 72);
+  hudCtx.strokeStyle='rgba(120,255,160,0.6)';
+  hudCtx.lineWidth=1;
+  hudCtx.strokeRect(-10, -36, 20, 72);
+  const fh = 70*frac;
+  // colour blend
+  let col;
+  if(frac>0.6)      col='#4fdd77';
+  else if(frac>0.3) col='#e6c043';
+  else              col='#e64a2a';
+  hudCtx.fillStyle=col;
+  hudCtx.fillRect(-9, 35 - fh, 18, fh);
+  // percentage readout
+  hudCtx.fillStyle='#cfeedd';
+  hudCtx.font='bold 9px "Share Tech Mono"';
+  hudCtx.fillText(Math.round(frac*100)+'%', 0, 50);
   // BOOST bar
   hudCtx.fillStyle='#ffcc66';
-  hudCtx.fillText('BOOST', 0, 38);
+  hudCtx.font='9px "Share Tech Mono"';
+  hudCtx.fillText('BOOST', 0, 64);
   hudCtx.fillStyle='rgba(0,10,5,0.6)';
-  hudCtx.fillRect(-10, 42, 20, 8);
+  hudCtx.fillRect(-10, 68, 20, 8);
   hudCtx.strokeStyle='rgba(255,180,80,0.7)';
   hudCtx.lineWidth=1;
-  hudCtx.strokeRect(-10, 42, 20, 8);
+  hudCtx.strokeRect(-10, 68, 20, 8);
   const bw = Math.max(0,Math.min(1,boost))*18;
   hudCtx.fillStyle='#ff9933';
-  hudCtx.fillRect(-9, 43, bw, 6);
+  hudCtx.fillRect(-9, 69, bw, 6);
   hudCtx.restore();
 }
 // Speed streaks — 2D radial lines from centre to reinforce forward motion.
