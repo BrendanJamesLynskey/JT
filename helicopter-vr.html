@@ -1440,7 +1440,7 @@ function buildWorld(){
 
 // ─── ARCADE / VECTOR LOOK ──────────────────────────────────
 // After the scene is fully built, convert everything to a classic
-// Battlezone / Star Wars 1983 arcade look: pure black void with bright
+// Battlezone / Star Wars 1983 arcade look: dark void with bright
 // wireframe geometry, plus solid neon shapes for projectiles + pickups.
 const RETRO_KIND_COLOR = {
   pylon:   0x44e0ff,
@@ -1452,10 +1452,21 @@ const RETRO_KIND_COLOR = {
   terrain: 0x22ff66,
   road:    0xffffff,
 };
+// Time-of-day palette for the arcade mode. `tint` multiplies every
+// wireframe colour; `bg` and `fogC/fogD` set the sky void + fog.
+const ARCADE_TOD = {
+  dawn:  { bg:0x140614, fogC:0x2a1420, fogD:0.0048, tint:[1.10,0.78,0.55], starCol:0xffd8a8 },
+  noon:  { bg:0x000a18, fogC:0x001028, fogD:0.0040, tint:[0.92,1.00,1.10], starCol:0xd8e8ff },
+  dusk:  { bg:0x1a0618, fogC:0x30082a, fogD:0.0052, tint:[1.08,0.60,0.95], starCol:0xffb0d8 },
+  night: { bg:0x000000, fogC:0x000a00, fogD:0.0055, tint:[0.55,1.10,0.60], starCol:0x88ffaa },
+};
+const ARCADE_WX = { clear:{fogMul:0.85, dark:1.00}, haze:{fogMul:1.8, dark:0.85}, storm:{fogMul:2.6, dark:0.60} };
 function applyArcadeLook(){
-  // void background + tight dark fog
-  scene.background = new THREE.Color(0x000000);
-  scene.fog = new THREE.FogExp2(0x0a0815, 0.0055);
+  const tod = ARCADE_TOD[STATE.tod] || ARCADE_TOD.night;
+  const wx  = ARCADE_WX[STATE.wx]  || ARCADE_WX.clear;
+  // void background + tight dark fog tinted by TOD and thickened by WX
+  scene.background = new THREE.Color(tod.bg);
+  scene.fog = new THREE.FogExp2(tod.fogC, tod.fogD * wx.fogMul);
   // disable the painterly sky and sun
   if(sky){ sky.visible = false; }
   if(sunSprite){ sunSprite.visible = false; }
@@ -1463,8 +1474,9 @@ function applyArcadeLook(){
   if(hemi){ hemi.intensity = 0; }
   if(dirL){ dirL.intensity = 0; }
   if(ambL){ ambL.intensity = 1.0; }
-  // ensure stars are present in the void (independent of TOD)
-  if(!stars){
+  // ensure stars are present, coloured by TOD
+  if(stars){ scene.remove(stars); stars.geometry.dispose(); stars.material.dispose(); stars=null; }
+  {
     const N=1400;
     const pos = new Float32Array(N*3);
     for(let i=0;i<N;i++){
@@ -1473,11 +1485,17 @@ function applyArcadeLook(){
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos,3));
-    const m = new THREE.PointsMaterial({color:0x88ffaa, size:2, sizeAttenuation:false, transparent:true, opacity:0.8, depthWrite:false});
+    const m = new THREE.PointsMaterial({color:tod.starCol, size:2, sizeAttenuation:false, transparent:true, opacity:0.85*wx.dark, depthWrite:false});
     stars = new THREE.Points(g,m);
     stars.renderOrder=-9;
     scene.add(stars);
   }
+  const tintColor = (c)=>{
+    const r = Math.min(1, c.r * tod.tint[0] * wx.dark);
+    const g = Math.min(1, c.g * tod.tint[1] * wx.dark);
+    const b = Math.min(1, c.b * tod.tint[2] * wx.dark);
+    c.setRGB(r,g,b);
+  };
   // Pre-index OBSTACLES by their root mesh so material conversion is
   // O(meshes * tree_depth) instead of O(meshes * obstacle_count). The
   // old nested scan was 20k+ meshes x 1500+ obstacles = hundreds of
@@ -1496,8 +1514,9 @@ function applyArcadeLook(){
     const emissive = m.emissive && ((m.emissiveIntensity||0) > 0.5);
     let nm;
     if(emissive){
-      // keep it a solid bright blob (missiles, pickups)
+      // keep it a solid bright blob (missiles, pickups) — tint lightly
       const col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15);
+      tintColor(col);
       nm = new THREE.MeshBasicMaterial({color:col});
     } else {
       let col;
@@ -1506,13 +1525,13 @@ function applyArcadeLook(){
       else if(obj===roadObj) col = new THREE.Color(RETRO_KIND_COLOR.road);
       else if(m.color) col = m.color.clone();
       else col = new THREE.Color(0x88ffaa);
-      // brighten
       const hsl = {}; col.getHSL(hsl);
       col.setHSL(hsl.h, Math.min(1, hsl.s+0.2), Math.max(0.6, hsl.l));
+      tintColor(col);
       nm = new THREE.MeshBasicMaterial({
         color: col,
         wireframe: true,
-        vertexColors: false,   // uniform per-obstacle colour looks cleaner
+        vertexColors: false,
       });
     }
     obj.userData.retroDone = true;
