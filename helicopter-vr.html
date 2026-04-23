@@ -64,6 +64,21 @@ html,body{background:#000;overflow:hidden;font-family:'Share Tech Mono',monospac
   box-shadow:0 0 18px rgba(255,140,40,.55);}
 #boostBtn.active{background:radial-gradient(circle,#ffaa33,#aa4400 70%);color:#fff;}
 
+#stickBase{position:fixed;left:24px;bottom:calc(env(safe-area-inset-bottom,18px) + 30px);
+  width:150px;height:150px;border-radius:50%;
+  background:radial-gradient(circle,rgba(30,60,90,.55),rgba(10,30,50,.25) 78%);
+  border:2px solid rgba(120,200,255,.55);display:none;touch-action:none;user-select:none;
+  z-index:15;box-shadow:0 0 22px rgba(60,180,255,.35);}
+#stickKnob{position:absolute;top:50%;left:50%;width:64px;height:64px;margin:-32px 0 0 -32px;
+  border-radius:50%;background:radial-gradient(circle,#a7e5ff,#2c6fa4);
+  box-shadow:0 0 14px rgba(100,220,255,.8);pointer-events:none;transition:transform .05s linear;}
+#stickLabel{position:absolute;top:-20px;left:0;width:100%;text-align:center;color:#7ac0e0;
+  font:700 .65rem 'Orbitron',sans-serif;letter-spacing:3px;opacity:.75;pointer-events:none;}
+#stickBase::before,#stickBase::after{content:'';position:absolute;left:50%;top:50%;width:2px;height:2px;
+  background:rgba(120,200,255,.25);}
+#stickBase::before{width:100%;height:1px;left:0;top:50%;transform:translateY(-0.5px);}
+#stickBase::after{width:1px;height:100%;left:50%;top:0;transform:translateX(-0.5px);}
+
 #menuBtn{position:fixed;top:calc(env(safe-area-inset-top,10px) + 4px);right:10px;
   width:40px;height:40px;border-radius:4px;background:rgba(0,20,10,.55);border:1px solid rgba(0,255,130,.3);
   color:#8fffaa;font-family:'Orbitron',sans-serif;font-size:.7rem;z-index:20;display:none;cursor:pointer;}
@@ -141,6 +156,10 @@ html,body{background:#000;overflow:hidden;font-family:'Share Tech Mono',monospac
   </div>
   <div id="instr-panel"></div>
 </div>
+<div id="stickBase">
+  <div id="stickLabel">STICK</div>
+  <div id="stickKnob"></div>
+</div>
 <button id="boostBtn">BOOST</button>
 <button id="menuBtn" onclick="goMenu()">MENU</button>
 
@@ -202,12 +221,10 @@ document.querySelectorAll('.ebtn[data-grp="ctl"]').forEach(b=>{
 });
 function updateHint(){
   const el=document.getElementById('hintText');
-  const auto = (STATE.ctl===AUTO_CTL) ? ' &nbsp;<span style="color:#7ee0ff;">(auto-detected for your device)</span>' : '';
-  if(STATE.ctl==='touch'){
-    el.innerHTML='<b>STICK</b> &ndash; left/right to <b>steer</b>, up/down to <b>climb / dive</b> &nbsp;|&nbsp; <b>BOOST</b> button bottom-right. Throttle is automatic.'+auto;
-  } else {
-    el.innerHTML='<b>MOUSE</b> &ndash; move to <b>steer + climb/dive</b> (or <b>A/D</b> to steer, <b>W/S</b> to dive/climb) &nbsp;|&nbsp; <b>SPACE</b> boost &nbsp;|&nbsp; <b>ESC</b> release mouse. Throttle is automatic.'+auto;
-  }
+  const extra = (STATE.ctl==='desktop')
+    ? ' &nbsp;<b>A/D</b> or <b>&larr;/&rarr;</b> steer, <b>W/S</b> or <b>&uarr;/&darr;</b> climb/dive, <b>Space</b> boost.'
+    : '';
+  el.innerHTML='Drag the on-screen <b>STICK</b> (bottom-left) to steer + climb/dive. Hit <b>BOOST</b> to push faster. Throttle is automatic.'+extra;
 }
 updateHint();
 
@@ -370,46 +387,46 @@ function hashFloat(i){ const s=Math.sin(i*12.9898)*43758.5453; return s-Math.flo
 // terrain ground level at world (x,z). Valley along road centre.
 let ROAD; // filled below
 function groundY(x,z){
-  // Arcade valley: flat floor near the road, steep walls rising on either
-  // side, noisy peaks far off. The road Y sets the floor height at that
-  // point so the valley follows the road's vertical undulation.
+  // Trench geometry: narrow flat floor, near-vertical walls rising fast.
+  // Walls cap high so you feel genuinely boxed in.
   const nr = roadNearest(x,z);
   const d = Math.sqrt(nr.d2);
   const baseY = nr.py;
-  const FLOOR_R = 22;   // flat valley floor radius
-  const WALL_R  = 70;   // where we reach cliff height
+  const FLOOR_R = 16;   // narrow trench floor
+  const WALL_R  = 32;   // walls reach top quickly
   let valleyY;
   if(d < FLOOR_R){
     valleyY = baseY - 1.2;
   } else if(d < WALL_R){
     const t = (d - FLOOR_R) / (WALL_R - FLOOR_R);
     const e = t*t*(3 - 2*t); // smoothstep
-    valleyY = baseY - 1.2 + e * 38;
+    valleyY = baseY - 1.2 + e * 70;     // fast, steep climb to wall height
   } else {
-    valleyY = baseY - 1.2 + 38 + (d - WALL_R) * 0.42;
+    valleyY = baseY - 1.2 + 70 + (d - WALL_R) * 1.4;
   }
-  // add surface noise — tiny on floor, large on walls
-  const wallMix = Math.min(1, Math.max(0, (d - FLOOR_R) / 50));
+  // noise — tiny on floor, big greebles on walls
+  const wallMix = Math.min(1, Math.max(0, (d - FLOOR_R) / 28));
   const n = pnoise(x,z);
-  return valleyY + n * (0.15 + 1.1 * wallMix);
+  return valleyY + n * (0.08 + 1.6 * wallMix);
 }
 
 // ─── ROAD SPLINE ─────────────────────────────────────────────
 function buildRoadSpline(){
+  // Trench-run geometry: long straight segments with occasional lazy
+  // bends. The floor itself is nearly flat with tiny undulation.
   const pts=[];
-  const N=80;
+  const N=100;
   let x=0, z=0;
   let hx=0; // heading
   for(let i=0;i<N;i++){
-    // wandering heading
-    hx += (hashFloat(i*3.7)-0.5)*0.55;
-    const step=90;
+    hx += (hashFloat(i*3.7)-0.5)*0.18; // was 0.55 — much straighter now
+    const step=110;
     x += Math.sin(hx)*step;
     z -= Math.cos(hx)*step;
-    const y = pnoise(x,z)+2.5 + Math.sin(i*0.17)*1.5;
+    const y = 2.0 + Math.sin(i*0.11)*0.8; // mostly level floor
     pts.push(new THREE.Vector3(x,y,z));
   }
-  const spline = new THREE.CatmullRomCurve3(pts,false,'catmullrom',0.3);
+  const spline = new THREE.CatmullRomCurve3(pts,false,'catmullrom',0.2);
   return {pts, spline};
 }
 
@@ -842,46 +859,51 @@ function resetHeli(){
   H.bestT = 0;
 }
 
-// ─── TOUCH / KEYBOARD INPUT ──────────────────────────────────
-const TOUCH={ lx:0, ly:0, rx:0, ry:0, lActive:false, rActive:false, lId:-1, rId:-1, lcx:0,lcy:0,rcx:0,rcy:0, boost:false };
+// ─── UNIFIED ON-SCREEN STICK ─────────────────────────────────
+// One visible stick, dragged with finger or mouse. Same input for
+// touch and desktop. Keyboard still works as a secondary input.
+const STICK={ x:0, y:0, active:false, id:-1 };
 const KEYS={};
-const STICK_R = 70; // px visual radius
+const TOUCH={ boost:false };
+const STICK_RANGE = 52; // px travel from centre
+const stickBaseEl = document.getElementById('stickBase');
+const stickKnobEl = document.getElementById('stickKnob');
 
-function onPointerDown(e){
+function updateStickFromPointer(e){
+  const r = stickBaseEl.getBoundingClientRect();
+  const cx = r.left + r.width/2;
+  const cy = r.top  + r.height/2;
+  let dx = e.clientX - cx, dy = e.clientY - cy;
+  const m = Math.hypot(dx,dy);
+  if(m > STICK_RANGE){ const s = STICK_RANGE/m; dx *= s; dy *= s; }
+  STICK.x = dx / STICK_RANGE;
+  STICK.y = dy / STICK_RANGE;
+  stickKnobEl.style.transform = 'translate('+dx+'px,'+dy+'px)';
+}
+function releaseStick(){
+  STICK.active=false; STICK.id=-1;
+  STICK.x=0; STICK.y=0;
+  stickKnobEl.style.transform = 'translate(0px,0px)';
+}
+stickBaseEl.addEventListener('pointerdown', e=>{
   if(!STATE.started||STATE.over) return;
-  if(STATE.ctl==='desktop') return; // desktop uses mouse-look, not virtual sticks
-  e.preventDefault();
-  const half = window.innerWidth/2;
-  const x=e.clientX, y=e.clientY;
-  // BOOST button handled by its own listener
-  if(x<half && !TOUCH.lActive){
-    TOUCH.lActive=true; TOUCH.lId=e.pointerId; TOUCH.lcx=x; TOUCH.lcy=y; TOUCH.lx=0; TOUCH.ly=0;
-  } else if(x>=half && !TOUCH.rActive){
-    TOUCH.rActive=true; TOUCH.rId=e.pointerId; TOUCH.rcx=x; TOUCH.rcy=y; TOUCH.rx=0; TOUCH.ry=0;
-  }
-}
-function onPointerMove(e){
-  if(!STATE.started||STATE.over) return;
-  if(e.pointerId===TOUCH.lId){
-    const dx=e.clientX-TOUCH.lcx, dy=e.clientY-TOUCH.lcy;
-    const m=Math.min(1, Math.hypot(dx,dy)/STICK_R);
-    const a=Math.atan2(dy,dx);
-    TOUCH.lx=Math.cos(a)*m; TOUCH.ly=Math.sin(a)*m;
-  } else if(e.pointerId===TOUCH.rId){
-    const dx=e.clientX-TOUCH.rcx, dy=e.clientY-TOUCH.rcy;
-    const m=Math.min(1, Math.hypot(dx,dy)/STICK_R);
-    const a=Math.atan2(dy,dx);
-    TOUCH.rx=Math.cos(a)*m; TOUCH.ry=Math.sin(a)*m;
-  }
-}
-function onPointerUp(e){
-  if(e.pointerId===TOUCH.lId){TOUCH.lActive=false; TOUCH.lId=-1; TOUCH.lx=0; TOUCH.ly=0;}
-  if(e.pointerId===TOUCH.rId){TOUCH.rActive=false; TOUCH.rId=-1; TOUCH.rx=0; TOUCH.ry=0;}
-}
-document.addEventListener('pointerdown', onPointerDown, {passive:false});
-document.addEventListener('pointermove', onPointerMove, {passive:false});
-document.addEventListener('pointerup', onPointerUp, {passive:false});
-document.addEventListener('pointercancel', onPointerUp, {passive:false});
+  e.preventDefault(); e.stopPropagation();
+  STICK.active=true; STICK.id=e.pointerId;
+  try{ stickBaseEl.setPointerCapture(e.pointerId); }catch(_){}
+  updateStickFromPointer(e);
+}, {passive:false});
+stickBaseEl.addEventListener('pointermove', e=>{
+  if(!STICK.active || e.pointerId!==STICK.id) return;
+  e.preventDefault(); e.stopPropagation();
+  updateStickFromPointer(e);
+}, {passive:false});
+['pointerup','pointercancel','pointerleave'].forEach(ev=>{
+  stickBaseEl.addEventListener(ev, e=>{
+    if(e.pointerId!==STICK.id) return;
+    try{ stickBaseEl.releasePointerCapture(e.pointerId); }catch(_){}
+    releaseStick();
+  });
+});
 
 window.addEventListener('keydown', e=>{
   KEYS[e.code]=true;
@@ -889,31 +911,9 @@ window.addEventListener('keydown', e=>{
 },{passive:false});
 window.addEventListener('keyup',   e=>{KEYS[e.code]=false;});
 
-// ─── DESKTOP MOUSE-LOOK ────────────────────────────────────
-const MOUSE={dx:0, dy:0, locked:false};
-function tryLockPointer(){
-  if(STATE.ctl!=='desktop' || !STATE.started || STATE.over) return;
-  const cv=document.getElementById('c');
-  if(document.pointerLockElement!==cv && cv.requestPointerLock){
-    cv.requestPointerLock();
-  }
-}
-document.addEventListener('pointerlockchange', ()=>{
-  MOUSE.locked = (document.pointerLockElement===document.getElementById('c'));
-});
-window.addEventListener('mousemove', e=>{
-  if(!MOUSE.locked) return;
-  // Normalise by window height so sensitivity is resolution-independent
-  const s = 1/Math.max(1, window.innerHeight);
-  MOUSE.dx += (e.movementX||0) * s;
-  MOUSE.dy += (e.movementY||0) * s;
-});
-// Re-acquire pointer lock on click while playing in desktop mode
-document.addEventListener('click', e=>{
-  if(STATE.ctl==='desktop' && STATE.started && !STATE.over && !MOUSE.locked){
-    tryLockPointer();
-  }
-});
+// (mouse-look was replaced by the on-screen stick — both touch and
+// desktop drag the same visible stick now.)
+function tryLockPointer(){ /* no-op: kept for call-sites */ }
 
 // ─── EXPLOSIONS ────────────────────────────────────────────
 // Billboard fireball + smoke + debris. Particles are recycled.
@@ -1158,28 +1158,21 @@ const qTmp=new THREE.Quaternion();
 const qRot=new THREE.Quaternion();
 
 function readInput(){
-  // Arcade controls: single axis of steer (roll→turn) + climb/dive pitch.
-  // Yaw and throttle are automatic. Boost is held.
-  if(STATE.ctl==='desktop'){
-    // Mouse drives steer (x) and climb/dive (y). Keyboard is a redundant override.
-    const mY = MOUSE.dx;  // mouse-x → steer / roll
-    const mP = MOUSE.dy;  // mouse-y → pitch (up = climb)
-    MOUSE.dx = MOUSE.dy = 0;
-    const kRoll = (KEYS['KeyD']?1:0) - (KEYS['KeyA']?1:0);
-    const kPitch = (KEYS['KeyS']?1:0) - (KEYS['KeyW']?1:0); // W = nose down (dive/forward feel)
-    IN.roll  = Math.max(-1, Math.min(1, mY*2.2 + kRoll));
-    IN.pitch = Math.max(-1, Math.min(1, -mP*2.0 + kPitch)); // +pitch = climb
-    IN.yaw   = 0;
-    IN.thr   = 0;
-    IN.boost = KEYS['Space']?1:0;
-  } else {
-    // Touch — one stick only: X = steer, Y = climb/dive. Right stick ignored.
-    IN.roll  =  TOUCH.lx;
-    IN.pitch = -TOUCH.ly;  // pull back = climb
-    IN.yaw   = 0;
-    IN.thr   = 0;
-    IN.boost = TOUCH.boost?1:0;
-  }
+  // One unified input model: the on-screen stick + optional WASD as a
+  // secondary on desktop. Stick X = steer L/R, Stick Y = climb (up)/
+  // dive (down). Boost from the on-screen button or Space.
+  let sx = STICK.x;
+  let sy = STICK.y;
+  // Keyboard augment (works everywhere; handy on desktop)
+  const kx = (KEYS['KeyD']||KEYS['ArrowRight']?1:0) - (KEYS['KeyA']||KEYS['ArrowLeft']?1:0);
+  const ky = (KEYS['KeyS']||KEYS['ArrowDown']?1:0) - (KEYS['KeyW']||KEYS['ArrowUp']?1:0);
+  sx = Math.max(-1, Math.min(1, sx + kx));
+  sy = Math.max(-1, Math.min(1, sy + ky));
+  IN.roll  = sx;          // stick right → bank right → turn right
+  IN.pitch = -sy;         // stick up (negative y) → climb
+  IN.yaw   = 0;
+  IN.thr   = 0;
+  IN.boost = (TOUCH.boost || KEYS['Space']) ? 1 : 0;
 }
 
 function step(dt){
@@ -1216,8 +1209,10 @@ function step(dt){
   // Extract current heading (yaw)
   const cur = new THREE.Euler().setFromQuaternion(H.quat,'YXZ');
   let yaw = cur.y;
-  // Bank-to-turn: bank angle yields yaw rate (arcade: generous turn gain)
-  const turnRate = -H.ang.z * 2.4; // rad/s
+  // Bank-to-turn: bank angle yields yaw rate. Sign chosen so stick-right
+  // banks right and turns right (Three.js YXZ: +Y yaw turns LEFT, so we
+  // need yawRate to be negative when H.ang.z is negative, i.e. same sign).
+  const turnRate = H.ang.z * 2.4; // rad/s
   yaw += turnRate * dt;
   // Recompose
   H.quat.setFromEuler(new THREE.Euler(H.ang.x, yaw, H.ang.z, 'YXZ'));
@@ -1227,8 +1222,8 @@ function step(dt){
   upTmp.set(0,1,0).applyQuaternion(H.quat);
   rightTmp.set(1,0,0).applyQuaternion(H.quat);
 
-  // Cruise speed with difficulty + boost scaling
-  const diffSpd = STATE.diff==='recon' ? 38 : STATE.diff==='hot' ? 58 : 48;
+  // Trench-run cruise: much faster; boost pushes further still.
+  const diffSpd = STATE.diff==='recon' ? 58 : STATE.diff==='hot' ? 95 : 75;
   const cruise  = diffSpd * boostF;
   const targetVel = forwardTmp.clone().multiplyScalar(cruise);
   // Climb/dive overlay from pitch (arcade: strong altitude authority)
@@ -1433,11 +1428,7 @@ function drawCockpitAndHUD(){
     hudCtx.fillRect(0,0,w,h);
   }
 
-  // touch stick indicator (single stick — steer + climb/dive)
-  if(STATE.ctl==='touch' && STATE.started && !STATE.over){
-    if(TOUCH.lActive){ drawStick(TOUCH.lcx, TOUCH.lcy, TOUCH.lx, TOUCH.ly); }
-    else { drawStickHint(w*0.25, h*0.5, 'STEER + CLIMB'); }
-  }
+  // (on-screen stick is a real DOM element now; no canvas hint needed)
 }
 function drawADI(cx,cy,r,pitchDeg,rollDeg){
   hudCtx.save();
@@ -1623,26 +1614,25 @@ function startGame(){
   document.getElementById('overlay').style.display='none';
   document.getElementById('hud').style.display='block';
   document.getElementById('menuBtn').style.display='block';
-  if(STATE.ctl==='touch'){ document.getElementById('boostBtn').style.display='block'; }
+  document.getElementById('boostBtn').style.display='block';
+  stickBaseEl.style.display='block';
   document.getElementById('instr-panel').textContent =
-    STATE.ctl==='touch' ? 'STICK steers + climbs   BOOST button bottom-right'
-                        : 'MOUSE steers + climbs   SPACE boost   (click to capture mouse)';
+    'STICK to steer + climb/dive   BOOST to push harder';
 
   DIST=0; MULT=1.0;
   buildWorld();
   resetHeli();
   nextFlash = 3 + Math.random()*4;
-  if(STATE.ctl==='desktop'){ tryLockPointer(); }
 }
 function restartGame(){
   document.getElementById('gameover').style.display='none';
   document.getElementById('hud').style.display='block';
-  if(STATE.ctl==='touch'){ document.getElementById('boostBtn').style.display='block'; }
+  document.getElementById('boostBtn').style.display='block';
+  stickBaseEl.style.display='block';
   STATE.over=false; STATE.started=true;
   DIST=0; MULT=1.0;
   buildWorld();
   resetHeli();
-  if(STATE.ctl==='desktop'){ tryLockPointer(); }
 }
 function goMenu(){
   STATE.started=false; STATE.over=false;
@@ -1650,9 +1640,10 @@ function goMenu(){
   document.getElementById('hud').style.display='none';
   document.getElementById('menuBtn').style.display='none';
   document.getElementById('boostBtn').style.display='none';
+  stickBaseEl.style.display='none';
+  releaseStick();
   document.getElementById('overlay').style.display='flex';
   hudCtx.clearRect(0,0,window.innerWidth,window.innerHeight);
-  if(document.pointerLockElement && document.exitPointerLock){ document.exitPointerLock(); }
 }
 const QUIPS={
   TERRAIN:'Nap-of-the-earth was a bit too literal.',
@@ -1680,10 +1671,11 @@ function gameOver(cause){
     'BEST MULT: <span>x'+MULT.toFixed(2)+'</span>';
   document.getElementById('hud').style.display='none';
   document.getElementById('boostBtn').style.display='none';
+  stickBaseEl.style.display='none';
+  releaseStick();
   // Let the explosion play before the panel pops up.
   setTimeout(()=>{ if(STATE.over) document.getElementById('gameover').style.display='flex'; }, 1500);
   if(rotorGain && AC){ rotorGain.gain.setTargetAtTime(0, AC.currentTime, 0.2); }
-  if(document.pointerLockElement && document.exitPointerLock){ document.exitPointerLock(); }
 }
 
 // ─── RENDER LOOP ───────────────────────────────────────────
