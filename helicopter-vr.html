@@ -415,7 +415,7 @@ function buildRoadSpline(){
   // Trench-run geometry: long straight segments with occasional lazy
   // bends. The floor itself is nearly flat with tiny undulation.
   const pts=[];
-  const N=100;
+  const N=800;
   let x=0, z=0;
   let hx=0; // heading
   for(let i=0;i<N;i++){
@@ -448,7 +448,7 @@ function makeRoadTexture(){
 }
 
 function buildRoad(spline){
-  const segs = 600;
+  const segs = 3200;
   const halfW = 6.5;
   const positions=[], uvs=[], indices=[];
   const tmp = new THREE.Vector3(), up=new THREE.Vector3(0,1,0), binorm=new THREE.Vector3();
@@ -507,27 +507,60 @@ function roadDistSq(x,z){ return roadNearest(x,z).d2; }
 
 // ─── TERRAIN ─────────────────────────────────────────────────
 let terrain;
+function valleyY(baseY, d, x, z){
+  const ad = Math.abs(d);
+  const FLOOR_R=16, WALL_R=32;
+  let y;
+  if(ad<FLOOR_R) y = baseY - 1.2;
+  else if(ad<WALL_R){ const tt=(ad-FLOOR_R)/(WALL_R-FLOOR_R); const e=tt*tt*(3-2*tt); y = baseY - 1.2 + e*70; }
+  else y = baseY - 1.2 + 70 + (ad-WALL_R)*1.4;
+  const wallMix = Math.min(1, Math.max(0, (ad-FLOOR_R)/28));
+  return y + pnoise(x,z) * (0.08 + 1.6*wallMix);
+}
 function buildTerrain(){
-  const SIZE=2400, SEG=150;
-  const geo=new THREE.PlaneGeometry(SIZE,SIZE,SEG,SEG);
-  geo.rotateX(-Math.PI/2);
-  const pos=geo.attributes.position;
-  const colors=new Float32Array(pos.count*3);
-  for(let i=0;i<pos.count;i++){
-    const x=pos.getX(i), z=pos.getZ(i);
-    const y=groundY(x,z);
-    pos.setY(i,y);
-    // colour by height
-    let r,g,b;
-    if(y<2){ r=0.23;g=0.45;b=0.22; }
-    else if(y<10){ const t=(y-2)/8; r=0.23+t*0.22; g=0.45-t*0.13; b=0.22-t*0.02; }
-    else if(y<18){ const t=(y-10)/8; r=0.45+t*0.15; g=0.32+t*0.05; b=0.2+t*0.05; }
-    else { const t=Math.min(1,(y-18)/6); r=0.6+t*0.35; g=0.55+t*0.4; b=0.52+t*0.45; }
-    // subtle AO
-    const ao=0.82+(Math.sin(x*0.12+z*0.09)*0.5+0.5)*0.18;
-    colors[i*3]=r*ao; colors[i*3+1]=g*ao; colors[i*3+2]=b*ao;
+  // Ribbon mesh extruded along the spline. Covers the full road length with
+  // a valley cross-section, so terrain is always precisely under the road.
+  const SLICES=1200;
+  const DS=[-500,-260,-140,-80,-45,-25,-14,-7,-3,0,3,7,14,25,45,80,140,260,500];
+  const NC=DS.length;
+  const positions=new Float32Array(SLICES*NC*3);
+  const colors=new Float32Array(SLICES*NC*3);
+  const up=new THREE.Vector3(0,1,0), bin=new THREE.Vector3();
+  for(let i=0;i<SLICES;i++){
+    const t = i/(SLICES-1);
+    const p = spline.getPointAt(t);
+    const tg = spline.getTangentAt(t).normalize();
+    bin.crossVectors(up,tg).normalize();
+    const baseY=p.y, sx=p.x, sz=p.z;
+    for(let j=0;j<NC;j++){
+      const d=DS[j];
+      const x = sx + bin.x*d;
+      const z = sz + bin.z*d;
+      const y = valleyY(baseY, d, x, z);
+      const k=(i*NC+j)*3;
+      positions[k]=x; positions[k+1]=y; positions[k+2]=z;
+      // colour by height relative to baseY
+      const h=y-baseY;
+      let r,g,b;
+      if(h<2){ r=0.23;g=0.45;b=0.22; }
+      else if(h<10){ const tt=(h-2)/8; r=0.23+tt*0.22; g=0.45-tt*0.13; b=0.22-tt*0.02; }
+      else if(h<18){ const tt=(h-10)/8; r=0.45+tt*0.15; g=0.32+tt*0.05; b=0.2+tt*0.05; }
+      else { const tt=Math.min(1,(h-18)/6); r=0.6+tt*0.35; g=0.55+tt*0.4; b=0.52+tt*0.45; }
+      const ao=0.82+(Math.sin(x*0.12+z*0.09)*0.5+0.5)*0.18;
+      colors[k]=r*ao; colors[k+1]=g*ao; colors[k+2]=b*ao;
+    }
   }
+  const indices=[];
+  for(let i=0;i<SLICES-1;i++){
+    for(let j=0;j<NC-1;j++){
+      const a=i*NC+j, b=i*NC+(j+1), c=(i+1)*NC+j, d=(i+1)*NC+(j+1);
+      indices.push(a,c,b, b,c,d);
+    }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
   geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
+  geo.setIndex(indices);
   geo.computeVertexNormals();
   const mat=new THREE.MeshStandardMaterial({vertexColors:true, flatShading:true, roughness:1.0, metalness:0.0});
   const m=new THREE.Mesh(geo,mat);
@@ -737,6 +770,36 @@ function placeBalloon(p){
   return g;
 }
 
+function placeTurret(worldX, worldY, worldZ, tang, side){
+  const g=new THREE.Group();
+  const mat=new THREE.MeshStandardMaterial({color:0x333840, roughness:0.7, metalness:0.3});
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.4,1.6,12), mat);
+  base.position.y=0.8;
+  g.add(base);
+  const barrel=new THREE.Mesh(new THREE.BoxGeometry(0.35,0.35,3.2), mat);
+  barrel.position.set(0,1.3,-1.6); // barrel points along local -Z (inward toward road)
+  g.add(barrel);
+  const light=new THREE.Mesh(new THREE.SphereGeometry(0.25,8,8),
+    new THREE.MeshBasicMaterial({color:0xff2222}));
+  light.position.set(0,1.9,0);
+  g.add(light);
+  g.position.set(worldX, worldY, worldZ);
+  // face inward toward road centre: tang gives road direction; binormal = up×tang points from road to +side.
+  // We want barrel (-Z locally) to point toward road, i.e. opposite side. Yaw accordingly.
+  // If side=+1 (placed on +binormal side), road is at -binormal direction. Barrel -Z should match that.
+  const bx=-tang.z*side, bz=tang.x*side; // binormal components scaled by side (from road→turret)
+  // inward direction (turret→road) = (-bx,-bz). Aim local -Z there.
+  g.rotation.y = Math.atan2(-bx, -bz);
+  scene.add(g);
+  // compute barrel world position
+  const barrelLocal=new THREE.Vector3(0,1.3,-1.6);
+  const barrelWorld=barrelLocal.clone().applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0,g.rotation.y,0))).add(g.position);
+  OBSTACLES.push({mesh:g, kind:'turret', pos:new THREE.Vector3(worldX, worldY+1, worldZ), r:1.6,
+    hitTop:worldY+3, hitBot:worldY-0.5, side, barrelBase:barrelWorld,
+    cooldown:1.8+Math.random()*1.4, active:true});
+  return g;
+}
+
 function populateObstacles(spline){
   const diff = STATE.diff;
   // Arcade overhaul: noticeably more stuff to weave through at every difficulty
@@ -752,7 +815,9 @@ function populateObstacles(spline){
     const nx=-tang.z, nz=tang.x;
     // pick side
     const side = (Math.random()<0.5?-1:1);
-    const off = 22+Math.random()*18;
+    // two valid bands: on the floor near the walls (<14), or up on the wall rim (>42).
+    // Avoid the 14..42 steep slope band where pylons would float/sink.
+    const off = (Math.random()<0.5) ? (6+Math.random()*7) : (44+Math.random()*14);
     const pt={x:p.x+nx*off*side, z:p.z+nz*off*side};
     const py=placePylon(pt);
     const pylonTop=new THREE.Vector3(pt.x, groundY(pt.x,pt.z)+PYLON_PROTO.H-2, pt.z);
@@ -766,6 +831,20 @@ function populateObstacles(spline){
       placeCable(pylonTop, prevPylon);
     }
     prevPylon = pylonTop;
+  }
+  // turrets — perched on the wall rim so they sit on level ground and
+  // have a clean line of sight down into the trench.
+  const turretStep = 220/densityMul;
+  for(let d=260; d<len-80; d+=turretStep + Math.random()*80){
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t).normalize();
+    const bx=-tang.z, bz=tang.x; // binormal (up×tang)
+    const side = (Math.random()<0.5?-1:1);
+    const off = 40 + Math.random()*12; // on the plateau above the trench
+    const wx=p.x+bx*side*off, wz=p.z+bz*side*off;
+    const wy=groundY(wx,wz);
+    placeTurret(wx, wy, wz, tang, side);
   }
   // arches
   const archStep = 380/densityMul;
@@ -784,7 +863,7 @@ function populateObstacles(spline){
     const tang=spline.getTangentAt(t);
     const nx=-tang.z, nz=tang.x;
     const side=Math.random()<0.5?-1:1;
-    const off=15+Math.random()*30;
+    const off=8+Math.random()*5; // 8..13 — hug the trench floor against the wall base
     placeBuilding({x:p.x+nx*off*side, z:p.z+nz*off*side});
   }
   // balloons — floating at varied altitudes
@@ -1010,6 +1089,65 @@ function explosionBurst(pos, scale){
     spawnDebris(pos, dir);
   }
 }
+// ─── MISSILES ─────────────────────────────────────────────
+const MISSILES=[];
+function spawnMissile(fromPos, targetPos){
+  const dir=new THREE.Vector3().subVectors(targetPos, fromPos);
+  // lead the target by 1 s of heli velocity
+  const lead=H.vel.clone().multiplyScalar(1.0);
+  dir.add(lead).normalize();
+  const vel=dir.multiplyScalar(72);
+  const geo=new THREE.CylinderGeometry(0.25,0.25,1.2,8);
+  geo.rotateX(Math.PI/2); // align to local -Z
+  const mat=new THREE.MeshStandardMaterial({color:0xff4422, emissive:0xff3311, emissiveIntensity:1.5, roughness:0.5});
+  const m=new THREE.Mesh(geo, mat);
+  m.position.copy(fromPos);
+  scene.add(m);
+  if(!EXPL_TEX){ EXPL_TEX=makeFireballTexture(); SMOKE_TEX=makeSmokeTexture(); }
+  const tmat=new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, color:0xff8844});
+  const trail=new THREE.Sprite(tmat);
+  trail.scale.set(1.4,1.4,1.4);
+  trail.position.copy(fromPos);
+  scene.add(trail);
+  MISSILES.push({mesh:m, trail:trail, vel:vel, life:3.5, maxLife:3.5});
+}
+function tickMissiles(dt){
+  for(let i=MISSILES.length-1;i>=0;i--){
+    const mi=MISSILES[i];
+    mi.life -= dt;
+    mi.mesh.position.addScaledVector(mi.vel, dt);
+    // orient along velocity (local -Z → vel direction)
+    const look=mi.mesh.position.clone().add(mi.vel);
+    mi.mesh.lookAt(look);
+    mi.trail.position.copy(mi.mesh.position);
+    // player hit
+    const dx=mi.mesh.position.x-H.pos.x, dy=mi.mesh.position.y-H.pos.y, dz=mi.mesh.position.z-H.pos.z;
+    const dist2=dx*dx+dy*dy+dz*dz;
+    let dead=false;
+    if(dist2 < 2.5*2.5 && H.invuln<=0 && H.alive){
+      damageShield('MISSILE');
+      explosionBurst(mi.mesh.position.clone(), 0.35);
+      dead=true;
+    } else if(mi.life<=0){
+      explosionBurst(mi.mesh.position.clone(), 0.2);
+      dead=true;
+    } else {
+      const gy=groundY(mi.mesh.position.x, mi.mesh.position.z);
+      if(mi.mesh.position.y < gy + 0.5){
+        explosionBurst(mi.mesh.position.clone(), 0.25);
+        dead=true;
+      }
+    }
+    if(dead){
+      scene.remove(mi.mesh); scene.remove(mi.trail);
+      if(mi.mesh.geometry) mi.mesh.geometry.dispose();
+      if(mi.mesh.material) mi.mesh.material.dispose();
+      if(mi.trail.material) mi.trail.material.dispose();
+      MISSILES.splice(i,1);
+    }
+  }
+}
+
 function tickParticles(dt){
   for(let i=PARTICLES.length-1;i>=0;i--){
     const p=PARTICLES[i];
@@ -1110,6 +1248,9 @@ function buildWorld(){
   while(PARTICLES.length){
     const p=PARTICLES.pop(); scene.remove(p.sprite);
   }
+  while(MISSILES.length){
+    const mi=MISSILES.pop(); scene.remove(mi.mesh); scene.remove(mi.trail);
+  }
   if(terrain){scene.remove(terrain); terrain.geometry.dispose(); terrain.material.dispose(); terrain=null;}
   if(treesA){scene.remove(treesA); treesA.geometry.dispose(); treesA.material.dispose(); treesA=null;}
   if(treesB){scene.remove(treesB); treesB.geometry.dispose(); treesB.material.dispose(); treesB=null;}
@@ -1121,12 +1262,14 @@ function buildWorld(){
 
   const rd=buildRoadSpline();
   spline=rd.spline;
-  ROADPTS = sampleRoadPolyline(spline, 900);
+  // Road is ~88 km long now; keep ~20 m sample spacing so groundY's
+  // nearest-road lookup stays accurate for obstacle placement + collision.
+  ROADPTS = sampleRoadPolyline(spline, 4500);
   ROAD = {distSqTo:(x,z)=>roadDistSq(x,z)};
 
   terrain = buildTerrain(); scene.add(terrain);
   roadObj = buildRoad(spline); scene.add(roadObj);
-  buildTrees();
+  // buildTrees(); // disabled — ribbon terrain leaves no useful rim for trees
   populateObstacles(spline);
   buildHeli();
 }
@@ -1143,7 +1286,7 @@ function checkCollisions(){
     const dx=px-o.pos.x, dz=pz-o.pos.z;
     const dh=Math.sqrt(dx*dx+dz*dz);
     if(dh > 120) continue;
-    if(o.kind==='pylon'||o.kind==='arch'||o.kind==='bldg'){
+    if(o.kind==='pylon'||o.kind==='arch'||o.kind==='bldg'||o.kind==='turret'){
       if(dh < o.r+1.5 && py > o.hitBot && py < o.hitTop){
         return o.kind;
       }
@@ -1317,13 +1460,23 @@ function step(dt){
   camEul.x += (Math.random()-0.5)*shk*0.6;
   camera.quaternion.setFromEuler(camEul);
 
-  // balloon drift & bob
+  // balloon drift & bob + turret firing
+  const diffCD = STATE.diff==='recon'?1.6 : STATE.diff==='hot'?0.65 : 1.0;
   for(let i=0;i<OBSTACLES.length;i++){
     const o=OBSTACLES[i];
     if(o.kind==='balloon'){
       o.mesh.position.x += o.mesh.userData.drift*dt;
       o.mesh.position.y += Math.sin(performance.now()*0.0009 + o.mesh.userData.bobPhase)*dt*0.6;
       o.pos.copy(o.mesh.position);
+    } else if(o.kind==='turret' && o.active){
+      const dx=H.pos.x-o.pos.x, dz=H.pos.z-o.pos.z;
+      const d2=dx*dx+dz*dz;
+      if(d2 > 380*380) continue;
+      o.cooldown -= dt;
+      if(o.cooldown<=0 && d2 < 280*280){
+        spawnMissile(o.barrelBase, H.pos);
+        o.cooldown = (2.2+Math.random()*1.5) * diffCD;
+      }
     }
   }
 
@@ -1678,6 +1831,8 @@ const QUIPS={
   BLDG:'Property damage insurance: void.',
   BALLOON:'Somebody is very sad right now.',
   CABLE:'Invisible cables strike again.',
+  MISSILE:'A turret remembered your name.',
+  TURRET:'The turret won the stand-off.',
 };
 function gameOver(cause){
   STATE.over=true;
@@ -1713,7 +1868,7 @@ function loop(){
     tickStorm(dt);
   }
   // particles (explosion debris/smoke) keep animating even after crash
-  if(STATE.started){ tickParticles(dt); }
+  if(STATE.started){ tickParticles(dt); tickMissiles(dt); }
   // persistent shake during crash sequence
   if(STATE.started && STATE.over && H.shake>0){
     H.shake = Math.max(0, H.shake - dt*1.2);
