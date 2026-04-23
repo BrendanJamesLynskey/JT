@@ -1275,20 +1275,49 @@ function tickBullets(dt){
         }
       }
     }
-    // vs turrets/balloons
+    // vs destructible obstacles — turret, balloon, pylon, arch, bldg, cable.
+    // Pylons/arches/buildings take multiple hits (tracked on o.hp).
     if(!dead){
       for(let j=OBSTACLES.length-1;j>=0;j--){
         const o=OBSTACLES[j];
-        if(o.kind!=='turret' && o.kind!=='balloon') continue;
+        if(o.kind==='pickup') continue;
         const dx=b.mesh.position.x-o.pos.x;
         const dy=b.mesh.position.y-o.pos.y;
         const dz=b.mesh.position.z-o.pos.z;
-        const hitR = o.kind==='balloon' ? 4.0 : 2.5;
+        let hitR;
+        switch(o.kind){
+          case 'balloon': hitR=4.0; break;
+          case 'turret':  hitR=2.5; break;
+          case 'pylon':   hitR=4.5; break;   // tall lattice
+          case 'arch':    hitR=12.0; break;  // spans the road
+          case 'bldg':    hitR=Math.max(4, o.r||5); break;
+          case 'cable':   hitR=1.6; break;
+          default: continue;
+        }
         if(dx*dx+dy*dy+dz*dz < hitR*hitR){
-          explosionBurst(o.mesh.position.clone(), o.kind==='balloon'?0.7:1.0);
-          if(o.kind==='turret'){ o.active=false; }
-          scene.remove(o.mesh);
-          OBSTACLES.splice(j,1);
+          // initial HP per kind on first hit
+          if(o.hp==null){
+            o.hp = (o.kind==='balloon'||o.kind==='cable'||o.kind==='turret') ? 1
+                 : (o.kind==='pylon') ? 2
+                 : (o.kind==='bldg')  ? 3
+                 : (o.kind==='arch')  ? 4
+                 : 1;
+          }
+          o.hp -= 1;
+          if(o.hp > 0){
+            // non-fatal hit: small spark burst, bullet still dies
+            explosionBurst(b.mesh.position.clone(), 0.25);
+          } else {
+            // destroyed: big burst + remove obstacle
+            const scale = (o.kind==='arch'||o.kind==='bldg') ? 1.3
+                        : (o.kind==='pylon') ? 1.0
+                        : (o.kind==='balloon') ? 0.7
+                        : 0.8;
+            explosionBurst(o.mesh.position.clone(), scale);
+            if(o.kind==='turret'){ o.active=false; }
+            scene.remove(o.mesh);
+            OBSTACLES.splice(j,1);
+          }
           dead=true;
           break;
         }
