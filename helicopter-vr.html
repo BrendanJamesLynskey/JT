@@ -537,23 +537,41 @@ function buildTerrain(){
   const positions=new Float32Array(SLICES*NC*3);
   const colors=new Float32Array(SLICES*NC*3);
   const up=new THREE.Vector3(0,1,0), bin=new THREE.Vector3();
-  const palN = TERRAIN_PALETTE.length;
+  // Natural terrain: grass on the floor → dirt on the slope → rock on
+  // the upper wall → snow at the rim. Subtle longitudinal biome shift
+  // so the valley doesn't look perfectly uniform along its length.
+  const naturalColor = (h, biome)=>{
+    // h = height above road floor; biome = 0..1 mixes lush <-> arid
+    let r,g,b;
+    if(h < 1.5){                // grass floor
+      r=0.22; g=0.52; b=0.20;
+    } else if(h < 12){          // grass → dirt
+      const t=(h-1.5)/10.5;
+      r=0.22+t*0.28; g=0.52-t*0.18; b=0.20-t*0.05;
+    } else if(h < 35){          // dirt → rock
+      const t=(h-12)/23;
+      r=0.50-t*0.05; g=0.34-t*0.02; b=0.15+t*0.25;
+    } else if(h < 60){           // rock
+      const t=(h-35)/25;
+      r=0.45+t*0.12; g=0.43+t*0.13; b=0.40+t*0.15;
+    } else {                    // snowy rim
+      const t=Math.min(1,(h-60)/20);
+      r=0.57+t*0.32; g=0.58+t*0.32; b=0.62+t*0.32;
+    }
+    // Biome shift: arid (1) pulls toward warmer browns; lush (0) keeps it green.
+    r += biome * 0.10;
+    g -= biome * 0.06;
+    b -= biome * 0.04;
+    return [r,g,b];
+  };
   for(let i=0;i<SLICES;i++){
     const t = i/(SLICES-1);
     const p = spline.getPointAt(t);
     const tg = spline.getTangentAt(t).normalize();
     bin.crossVectors(up,tg).normalize();
     const baseY=p.y, sx=p.x, sz=p.z;
-    // Smoothly blend between palette bands as you travel along the road.
-    const bf = (i/TERRAIN_BAND_SLICES);
-    const ii = Math.floor(bf) % palN;
-    const ni = (ii+1) % palN;
-    const fr = bf - Math.floor(bf);
-    const ease = fr*fr*(3-2*fr);
-    const c1 = TERRAIN_PALETTE[ii], c2 = TERRAIN_PALETTE[ni];
-    const baseR = c1[0]*(1-ease) + c2[0]*ease;
-    const baseG = c1[1]*(1-ease) + c2[1]*ease;
-    const baseB = c1[2]*(1-ease) + c2[2]*ease;
+    // Slow biome wobble along the road
+    const biome = 0.5 + 0.45*Math.sin(i*0.018);
     for(let j=0;j<NC;j++){
       const d=DS[j];
       const x = sx + bin.x*d;
@@ -561,15 +579,15 @@ function buildTerrain(){
       const y = valleyY(baseY, d, x, z);
       const k=(i*NC+j)*3;
       positions[k]=x; positions[k+1]=y; positions[k+2]=z;
-      // Terrain is deliberately dim so bright neon obstacles pop against
-      // it. Floor ~0.55, walls drop to ~0.20 at the rim.
+      // Floor reads brightest, walls dim slightly so neon obstacles still pop.
       const h = y - baseY;
       const ad = Math.abs(d);
-      const dim = ad < 16 ? 0.55
-                 : Math.max(0.18, 0.55 - (ad-16)*0.012);
-      const ao = 0.9 + (Math.sin(x*0.11 + z*0.08)*0.5+0.5)*0.10;
+      const dim = ad < 16 ? 0.95
+                 : Math.max(0.45, 0.95 - (ad-16)*0.010);
+      const ao = 0.88 + (Math.sin(x*0.11 + z*0.08)*0.5+0.5)*0.12;
+      const c = naturalColor(h, biome);
       const k2 = dim * ao;
-      colors[k]=Math.min(1,baseR*k2); colors[k+1]=Math.min(1,baseG*k2); colors[k+2]=Math.min(1,baseB*k2);
+      colors[k]=Math.min(1,c[0]*k2); colors[k+1]=Math.min(1,c[1]*k2); colors[k+2]=Math.min(1,c[2]*k2);
     }
   }
   // Build line-only index buffer: cross-section lines (rungs) plus
