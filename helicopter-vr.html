@@ -1415,19 +1415,25 @@ document.addEventListener('dblclick', e=>e.preventDefault());
 // ─── AUDIO ────────────────────────────────────────────────
 let AC=null, masterGain=null, rotorOsc=null, rotorGain=null, rotorLFO=null;
 function unlockAudio(){
-  if(AC) return;
-  try{
-    AC = new (window.AudioContext||window.webkitAudioContext)();
-    masterGain = AC.createGain(); masterGain.gain.value=0.22; masterGain.connect(AC.destination);
-    rotorOsc = AC.createOscillator(); rotorOsc.type='sawtooth'; rotorOsc.frequency.value=90;
-    rotorGain = AC.createGain(); rotorGain.gain.value=0;
-    const lp = AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=360; lp.Q.value=0.6;
-    rotorOsc.connect(lp); lp.connect(rotorGain); rotorGain.connect(masterGain);
-    rotorLFO = AC.createOscillator(); rotorLFO.type='sine'; rotorLFO.frequency.value=14;
-    const lfoGain = AC.createGain(); lfoGain.gain.value=12;
-    rotorLFO.connect(lfoGain); lfoGain.connect(rotorOsc.frequency);
-    rotorOsc.start(); rotorLFO.start();
-  }catch(e){/* no audio */}
+  if(!AC){
+    try{
+      AC = new (window.AudioContext||window.webkitAudioContext)();
+      masterGain = AC.createGain(); masterGain.gain.value=0.22; masterGain.connect(AC.destination);
+      rotorOsc = AC.createOscillator(); rotorOsc.type='sawtooth'; rotorOsc.frequency.value=90;
+      rotorGain = AC.createGain(); rotorGain.gain.value=0;
+      const lp = AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=360; lp.Q.value=0.6;
+      rotorOsc.connect(lp); lp.connect(rotorGain); rotorGain.connect(masterGain);
+      rotorLFO = AC.createOscillator(); rotorLFO.type='sine'; rotorLFO.frequency.value=14;
+      const lfoGain = AC.createGain(); lfoGain.gain.value=12;
+      rotorLFO.connect(lfoGain); lfoGain.connect(rotorOsc.frequency);
+      rotorOsc.start(); rotorLFO.start();
+    }catch(e){/* no audio */}
+  }
+  // Always resume — Chrome/Safari often hand back a 'suspended' context
+  // that needs an explicit resume() inside the user-gesture handler.
+  if(AC && AC.state==='suspended'){
+    try{ AC.resume(); }catch(_){}
+  }
 }
 function crashBoom(){
   if(!AC) return;
@@ -2077,31 +2083,44 @@ function drawTape(cx,cy,w,h,val,min,max,label,bigVal){
   hudCtx.restore();
 }
 function drawHeading(cx,cy,w,deg){
+  // Scrolling compass tape: ticks slide horizontally so the centre
+  // always reads the current heading. Pixels-per-degree is fixed.
+  const PPD = 1.6;
+  const halfDeg = (w/2)/PPD;
   hudCtx.save();
   hudCtx.translate(cx,cy);
   hudCtx.fillStyle='rgba(0,10,5,0.5)';
   hudCtx.fillRect(-w/2,-14,w,28);
   hudCtx.strokeStyle='rgba(120,255,160,0.5)';
   hudCtx.strokeRect(-w/2,-14,w,28);
+  // clip so ticks don't leak past the box
+  hudCtx.beginPath(); hudCtx.rect(-w/2+1,-14,w-2,28); hudCtx.clip();
   hudCtx.font='11px "Share Tech Mono"';
   hudCtx.fillStyle='#8fffaa';
   hudCtx.textAlign='center';
-  // labels every 30 deg
-  for(let v=-60;v<=60;v+=10){
-    const d = Math.round(deg/10)*10 + v;
-    const x = v*1.6;
-    hudCtx.fillRect(x, -14, 1, v%30===0?10:5);
-    if(v%30===0){
-      const d2 = (d+720)%360;
+  // Walk every 5° in [-halfDeg, +halfDeg] around current heading.
+  const start = Math.ceil((deg - halfDeg)/5)*5;
+  const end   = Math.floor((deg + halfDeg)/5)*5;
+  for(let h=start; h<=end; h+=5){
+    const x = (h - deg) * PPD;
+    const wrapped = ((h%360)+360)%360;
+    const major = (wrapped%30)===0;
+    hudCtx.fillRect(x, -14, 1, major?10:5);
+    if(major){
       let label;
-      if(d2===0)label='N'; else if(d2===90)label='E'; else if(d2===180)label='S'; else if(d2===270)label='W';
-      else label=String(d2/10|0).padStart(2,'0');
+      if(wrapped===0)        label='N';
+      else if(wrapped===90)  label='E';
+      else if(wrapped===180) label='S';
+      else if(wrapped===270) label='W';
+      else label=String(wrapped/10|0).padStart(2,'0');
       hudCtx.fillText(label, x, 10);
     }
   }
-  // centre
+  hudCtx.restore();
+  // centre indicator (drawn after restore so it sits above the clipped tape)
+  hudCtx.save();
   hudCtx.strokeStyle='#ffdd00'; hudCtx.lineWidth=2;
-  hudCtx.beginPath(); hudCtx.moveTo(0,-18); hudCtx.lineTo(0,14); hudCtx.stroke();
+  hudCtx.beginPath(); hudCtx.moveTo(cx,cy-18); hudCtx.lineTo(cx,cy+14); hudCtx.stroke();
   hudCtx.restore();
 }
 function drawLifeAndBoost(cx,cy,life,maxLife,boost){
