@@ -402,8 +402,8 @@ function groundY(x,z){
   const nr = roadNearest(x,z);
   const d = Math.sqrt(nr.d2);
   const baseY = nr.py;
-  const FLOOR_R = 16;   // narrow trench floor
-  const WALL_R  = 32;   // walls reach top quickly
+  const FLOOR_R = 38;   // wide valley floor — easier to fly in
+  const WALL_R  = 80;   // walls finish ramping at this radius
   let valleyY;
   if(d < FLOOR_R){
     valleyY = baseY - 1.2;
@@ -415,7 +415,7 @@ function groundY(x,z){
     valleyY = baseY - 1.2 + 70 + (d - WALL_R) * 1.4;
   }
   // noise — tiny on floor, big greebles on walls
-  const wallMix = Math.min(1, Math.max(0, (d - FLOOR_R) / 28));
+  const wallMix = Math.min(1, Math.max(0, (d - FLOOR_R) / 50));
   const n = pnoise(x,z);
   return valleyY + n * (0.08 + 1.6 * wallMix);
 }
@@ -519,20 +519,21 @@ function roadDistSq(x,z){ return roadNearest(x,z).d2; }
 let terrain;
 function valleyY(baseY, d, x, z){
   const ad = Math.abs(d);
-  const FLOOR_R=16, WALL_R=32;
+  const FLOOR_R=38, WALL_R=80;   // wider valley
   let y;
   if(ad<FLOOR_R) y = baseY - 1.2;
   else if(ad<WALL_R){ const tt=(ad-FLOOR_R)/(WALL_R-FLOOR_R); const e=tt*tt*(3-2*tt); y = baseY - 1.2 + e*70; }
   else y = baseY - 1.2 + 70 + (ad-WALL_R)*1.4;
-  const wallMix = Math.min(1, Math.max(0, (ad-FLOOR_R)/28));
+  const wallMix = Math.min(1, Math.max(0, (ad-FLOOR_R)/50));
   return y + pnoise(x,z) * (0.08 + 1.6*wallMix);
 }
 function buildTerrain(){
-  // Ribbon mesh extruded along the spline. Deliberately low resolution
-  // so wireframe lines stay clearly readable as individual lines rather
-  // than merging into a gray wash at distance (classic arcade look).
-  const SLICES=360;                           // was 1200 — far fewer bands
-  const DS=[-500,-180,-80,-32,-16,0,16,32,80,180,500];   // 11 samples
+  // Solid ribbon mesh extruded along the spline. Cartoon-style flat
+  // colour fills (no shading, no wireframe) — easy to read at speed.
+  const SLICES=360;
+  // Cross-section anchors line up with the wider valley: floor inside
+  // ±38 m, wall ramp out to ±80 m, then mountains beyond.
+  const DS=[-700,-300,-180,-110,-80,-55,-38,0,38,55,80,110,180,300,700];
   const NC=DS.length;
   const positions=new Float32Array(SLICES*NC*3);
   const colors=new Float32Array(SLICES*NC*3);
@@ -582,36 +583,31 @@ function buildTerrain(){
       // Floor reads brightest, walls dim slightly so neon obstacles still pop.
       const h = y - baseY;
       const ad = Math.abs(d);
-      const dim = ad < 16 ? 0.95
-                 : Math.max(0.45, 0.95 - (ad-16)*0.010);
+      const dim = ad < 38 ? 1.00
+                 : Math.max(0.55, 1.00 - (ad-38)*0.008);
       const ao = 0.88 + (Math.sin(x*0.11 + z*0.08)*0.5+0.5)*0.12;
       const c = naturalColor(h, biome);
       const k2 = dim * ao;
       colors[k]=Math.min(1,c[0]*k2); colors[k+1]=Math.min(1,c[1]*k2); colors[k+2]=Math.min(1,c[2]*k2);
     }
   }
-  // Build line-only index buffer: cross-section lines (rungs) plus
-  // along-road lines (rails). No triangle edges, no diagonal noise —
-  // just a clean neon grid like Battlezone / Star Wars '83.
+  // Solid triangulation between adjacent slices/samples. Vertex colours
+  // carry the natural grass/dirt/rock/snow palette; MeshBasicMaterial
+  // gives flat unshaded fills — exactly the cartoon look we want.
   const indices=[];
-  // rungs (each slice: connect adjacent cross-section samples)
-  for(let i=0;i<SLICES;i++){
-    for(let j=0;j<NC-1;j++){
-      indices.push(i*NC+j, i*NC+(j+1));
-    }
-  }
-  // rails (each sample: connect adjacent slices)
   for(let i=0;i<SLICES-1;i++){
-    for(let j=0;j<NC;j++){
-      indices.push(i*NC+j, (i+1)*NC+j);
+    for(let j=0;j<NC-1;j++){
+      const a=i*NC+j, b=i*NC+(j+1), c=(i+1)*NC+j, d=(i+1)*NC+(j+1);
+      indices.push(a,c,b, b,c,d);
     }
   }
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
   geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
   geo.setIndex(indices);
-  const mat=new THREE.LineBasicMaterial({vertexColors:true});
-  return new THREE.LineSegments(geo, mat);
+  geo.computeVertexNormals();
+  const mat=new THREE.MeshBasicMaterial({vertexColors:true});
+  return new THREE.Mesh(geo, mat);
 }
 
 // ─── TREES (InstancedMesh) ────────────────────────────────
@@ -882,9 +878,9 @@ function populateObstacles(spline){
     const nx=-tang.z, nz=tang.x;
     // pick side
     const side = (Math.random()<0.5?-1:1);
-    // two valid bands: on the floor near the walls (<14), or up on the wall rim (>42).
-    // Avoid the 14..42 steep slope band where pylons would float/sink.
-    const off = (Math.random()<0.5) ? (6+Math.random()*7) : (44+Math.random()*14);
+    // Two valid bands: on the wide floor (<32), or up on the plateau (>90).
+    // Avoid the 32..90 wall slope where things would float/sink.
+    const off = (Math.random()<0.5) ? (12+Math.random()*18) : (95+Math.random()*22);
     const pt={x:p.x+nx*off*side, z:p.z+nz*off*side};
     const py=placePylon(pt);
     const pylonTop=new THREE.Vector3(pt.x, groundY(pt.x,pt.z)+PYLON_PROTO.H-2, pt.z);
@@ -908,7 +904,7 @@ function populateObstacles(spline){
     const tang=spline.getTangentAt(t).normalize();
     const bx=-tang.z, bz=tang.x; // binormal (up×tang)
     const side = (Math.random()<0.5?-1:1);
-    const off = 40 + Math.random()*12; // on the plateau above the trench
+    const off = 95 + Math.random()*25; // on the plateau above the trench
     const wx=p.x+bx*side*off, wz=p.z+bz*side*off;
     const wy=groundY(wx,wz);
     placeTurret(wx, wy, wz, tang, side);
@@ -930,7 +926,7 @@ function populateObstacles(spline){
     const tang=spline.getTangentAt(t);
     const nx=-tang.z, nz=tang.x;
     const side=Math.random()<0.5?-1:1;
-    const off=8+Math.random()*5; // 8..13 — hug the trench floor against the wall base
+    const off=18+Math.random()*15; // 18..33 — hug the wider trench floor against the wall base
     placeBuilding({x:p.x+nx*off*side, z:p.z+nz*off*side});
   }
   // balloons — floating at varied altitudes
@@ -1591,8 +1587,8 @@ function applyArcadeLook(){
   }
   const dim = (hex)=> new THREE.Color(hex).multiplyScalar(wx.brightness);
   scene.traverse(obj=>{
-    // Terrain is already a LineSegments with palette-banded vertex
-    // colours — just multiply its material.color by the weather dim.
+    // Terrain is a solid Mesh with natural vertex colours; only the
+    // material.color (a multiplier on vertex colours) is dimmed by weather.
     if(obj===terrain && obj.material && obj.material.color){
       obj.material.color.setScalar(wx.brightness);
       return;
@@ -1612,13 +1608,13 @@ function applyArcadeLook(){
       col.multiplyScalar(wx.brightness);
       nm = new THREE.MeshBasicMaterial({color:col});
     } else if(obj===roadObj){
-      nm = new THREE.MeshBasicMaterial({ color:dim(ROAD_COLOR), wireframe:true });
+      nm = new THREE.MeshBasicMaterial({ color:dim(ROAD_COLOR) });
     } else if(rootHex!=null){
-      nm = new THREE.MeshBasicMaterial({ color:dim(rootHex), wireframe:true });
+      nm = new THREE.MeshBasicMaterial({ color:dim(rootHex) });
     } else if(m.color){
-      nm = new THREE.MeshBasicMaterial({ color:m.color.clone().multiplyScalar(wx.brightness), wireframe:true });
+      nm = new THREE.MeshBasicMaterial({ color:m.color.clone().multiplyScalar(wx.brightness) });
     } else {
-      nm = new THREE.MeshBasicMaterial({ color:dim(0x88ffaa), wireframe:true });
+      nm = new THREE.MeshBasicMaterial({ color:dim(0x88ffaa) });
     }
     obj.userData.retroDone = true;
     obj.material = nm;
@@ -1708,20 +1704,20 @@ function step(dt){
   // (squaring an input <1 shrinks it), a dead-zone removes jitter, and
   // modest target angles keep the horizon steady. The helicopter almost
   // flies itself; the stick nudges it.
-  const dz = v => (Math.abs(v)<0.10 ? 0 : Math.sign(v)*(Math.abs(v)-0.10)/0.90);
-  const smooth = v => Math.sign(v) * (v*v); // small stick → very small response
+  // Forgiving stick: wide deadzone, gentle response, strong auto-level.
+  const dz = v => (Math.abs(v)<0.15 ? 0 : Math.sign(v)*(Math.abs(v)-0.15)/0.85);
+  const smooth = v => Math.sign(v) * (v*v);
   const rollIn  = smooth(dz(IN.roll));
   const pitchIn = smooth(dz(IN.pitch));
-  const targetRoll  = rollIn  * 0.50;  // ~29° max bank (was 49°)
-  const targetPitch = pitchIn * 0.30;  // gentler climb/dive
-  // Slower, softer response
-  const rollLerp  = 1 - Math.exp(-dt*4.0);
-  const pitchLerp = 1 - Math.exp(-dt*3.5);
+  const targetRoll  = rollIn  * 0.38;  // gentler max bank
+  const targetPitch = pitchIn * 0.22;  // gentler climb/dive
+  const rollLerp  = 1 - Math.exp(-dt*2.8);
+  const pitchLerp = 1 - Math.exp(-dt*2.4);
   H.ang.z += ((-targetRoll)  - H.ang.z) * rollLerp;
   H.ang.x += (( targetPitch) - H.ang.x) * pitchLerp;
-  // Auto-level: if stick near centre, return firmly to level flight
-  if(Math.abs(IN.roll)<0.12)  H.ang.z *= (1 - Math.min(1,dt*3.2));
-  if(Math.abs(IN.pitch)<0.12) H.ang.x *= (1 - Math.min(1,dt*2.8));
+  // Auto-level when stick is near centre — strong pull back to level.
+  if(Math.abs(IN.roll)<0.18)  H.ang.z *= (1 - Math.min(1,dt*4.5));
+  if(Math.abs(IN.pitch)<0.18) H.ang.x *= (1 - Math.min(1,dt*4.0));
 
   // Rebuild orientation from heading + current roll/pitch
   // Extract current heading (yaw)
@@ -1731,7 +1727,7 @@ function step(dt){
   // banks right and turns right (Three.js YXZ: +Y yaw turns LEFT, so we
   // need yawRate to be negative when H.ang.z is negative, i.e. same sign).
   // Softer turn gain so banking feels like a gentle curve, not a whip.
-  const turnRate = H.ang.z * 1.4; // rad/s
+  const turnRate = H.ang.z * 0.95; // rad/s
   yaw += turnRate * dt;
   // Recompose
   H.quat.setFromEuler(new THREE.Euler(H.ang.x, yaw, H.ang.z, 'YXZ'));
@@ -1747,7 +1743,7 @@ function step(dt){
   const cruise  = diffSpd * boostF;
   const targetVel = forwardTmp.clone().multiplyScalar(cruise);
   // Climb/dive overlay from pitch — gentler so altitude doesn't swing wildly
-  const climb = H.ang.x * 11.0;          // m/s
+  const climb = H.ang.x * 7.5;           // m/s — gentler altitude swings
   targetVel.y += climb;
 
   // Ease current velocity toward target — arcade: no inertia struggle
