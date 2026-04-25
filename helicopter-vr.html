@@ -167,7 +167,7 @@ html,body{background:#000;overflow:hidden;font-family:'Share Tech Mono',monospac
 <div id="hud">
   <div id="topbar">
     <div class="blk" id="scorehud">DIST <span id="distv">0</span> m &nbsp;&nbsp; x<span id="multv">1.0</span></div>
-    <div class="blk" id="prizehud">LVL <span id="lvlv">1</span> &nbsp; PRIZES <span id="przv">0</span>/<span id="przgv">5</span></div>
+    <div class="blk" id="prizehud">LVL <span id="lvlv">1</span> &nbsp; URANIUM <span id="przv">0</span>/<span id="przgv">5</span></div>
     <div class="blk" id="timehud">T+<span id="timev">0</span>s</div>
   </div>
   <div id="instr-panel"></div>
@@ -898,19 +898,20 @@ function placePickup(worldX, worldY, worldZ, tang){
 // valley floor. Worth a chunky distance bonus when collected.
 function placePrize(worldX, worldY, worldZ){
   const g=new THREE.Group();
+  // Uranium block — yellowcake-yellow with a sickly green emissive glow.
   const gem=new THREE.Mesh(
     new THREE.OctahedronGeometry(2.6, 0),
-    new THREE.MeshStandardMaterial({color:0xffe055, emissive:0xffaa00, emissiveIntensity:1.6, roughness:0.25, metalness:0.3})
+    new THREE.MeshStandardMaterial({color:0xc8ff44, emissive:0x66ff22, emissiveIntensity:1.8, roughness:0.35, metalness:0.2})
   );
   g.add(gem);
   if(!EXPL_TEX){ EXPL_TEX=makeFireballTexture(); SMOKE_TEX=makeSmokeTexture(); }
-  const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, color:0xffd84a}));
+  const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, color:0x99ff44}));
   halo.scale.set(8,8,8);
   g.add(halo);
-  // pedestal beam — a thin upright cylinder so it's visible from far away
+  // pedestal beam — green so it's clearly the radioactive marker
   const beam=new THREE.Mesh(
     new THREE.CylinderGeometry(0.25,0.25,12,8),
-    new THREE.MeshBasicMaterial({color:0xffe055, transparent:true, opacity:0.55})
+    new THREE.MeshBasicMaterial({color:0x88ff22, transparent:true, opacity:0.6})
   );
   beam.position.y=-6;
   g.add(beam);
@@ -1335,30 +1336,48 @@ function tickMissiles(dt){
 // ─── BULLETS (helicopter nose gun) ─────────────────────────
 const BULLETS=[];
 let GUN_COOLDOWN = 0;   // seconds until next shot allowed
-const GUN_RATE = 0.09;  // seconds between shots when trigger held
+const GUN_RATE = 0.045; // ~22 rps — proper machine-gun cadence
+let GUN_BARREL = 0;     // alternate between two muzzles
 function spawnBullet(){
-  // Spawn slightly ahead of cockpit, fired along current heli-forward.
-  const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(H.quat);
-  const right=new THREE.Vector3(1,0,0).applyQuaternion(H.quat);
-  const side=(Math.random()-0.5)*0.8;
-  const origin=H.pos.clone().addScaledVector(fwd, 2.5).addScaledVector(right, side);
-  const vel=fwd.clone().multiplyScalar(260).add(H.vel); // inherit heli velocity
-  const geo=new THREE.CylinderGeometry(0.16,0.16,2.0,6);
+  // Spawn from one of two muzzles a bit ahead of the cockpit. A small
+  // random spread plus a slight aim wobble give a chunky, tracer-like
+  // machine-gun feel.
+  const fwd  = new THREE.Vector3(0,0,-1).applyQuaternion(H.quat);
+  const right= new THREE.Vector3(1,0,0).applyQuaternion(H.quat);
+  const upV  = new THREE.Vector3(0,1,0).applyQuaternion(H.quat);
+  GUN_BARREL ^= 1;
+  const muzzleX = (GUN_BARREL ? 1 : -1) * 0.9;
+  const origin = H.pos.clone()
+    .addScaledVector(fwd,   2.5)
+    .addScaledVector(right, muzzleX)
+    .addScaledVector(upV,  -0.25);
+  // Spread: small random angle off forward (radians)
+  const spread = 0.018;
+  const sx = (Math.random()-0.5)*spread;
+  const sy = (Math.random()-0.5)*spread;
+  const dir = fwd.clone()
+    .addScaledVector(right, sx)
+    .addScaledVector(upV,   sy)
+    .normalize();
+  const vel = dir.multiplyScalar(280).add(H.vel);
+  const geo = new THREE.CylinderGeometry(0.18,0.18,2.4,6);
   geo.rotateX(Math.PI/2);
-  const mat=new THREE.MeshBasicMaterial({color:0xffee66});
-  const m=new THREE.Mesh(geo,mat);
+  // Tracers alternate yellow / orange so the stream reads as fast & gritty.
+  const col = (GUN_BARREL ? 0xffee44 : 0xffaa22);
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:col}));
   m.position.copy(origin);
   scene.add(m);
-  BULLETS.push({mesh:m, vel:vel, life:1.2});
-  // muzzle flash sound
+  BULLETS.push({mesh:m, vel:vel, life:1.0});
+  // Quick percussive bark — short, punchy, low-pitched.
   if(AC && masterGain){
-    const t=AC.currentTime;
-    const o=AC.createOscillator(); const g=AC.createGain();
-    o.type='square'; o.frequency.setValueAtTime(900, t);
-    o.frequency.exponentialRampToValueAtTime(180, t+0.08);
-    g.gain.setValueAtTime(0.08, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t+0.09);
-    o.connect(g); g.connect(masterGain); o.start(); o.stop(t+0.10);
+    const t = AC.currentTime;
+    const o = AC.createOscillator(); const g = AC.createGain();
+    o.type='square';
+    o.frequency.setValueAtTime(420 + Math.random()*60, t);
+    o.frequency.exponentialRampToValueAtTime(90, t+0.04);
+    g.gain.setValueAtTime(0.10, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t+0.05);
+    o.connect(g); g.connect(masterGain); o.start(); o.stop(t+0.06);
   }
 }
 function tickBullets(dt){
