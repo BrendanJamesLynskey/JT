@@ -88,7 +88,7 @@ html,body{background:#000;overflow:hidden;font-family:'Share Tech Mono',monospac
 #stickBase::before{width:100%;height:1px;left:0;top:50%;transform:translateY(-0.5px);}
 #stickBase::after{width:1px;height:100%;left:50%;top:0;transform:translateX(-0.5px);}
 
-#menuBtn{position:fixed;top:calc(env(safe-area-inset-top,10px) + 4px);right:10px;
+#menuBtn{position:fixed;top:calc(env(safe-area-inset-top,10px) + 70px);right:10px;
   width:40px;height:40px;border-radius:4px;background:rgba(0,20,10,.55);border:1px solid rgba(0,255,130,.3);
   color:#8fffaa;font-family:'Orbitron',sans-serif;font-size:.7rem;z-index:20;display:none;cursor:pointer;}
 
@@ -580,15 +580,65 @@ function buildTerrain(){
       const y = valleyY(baseY, d, x, z);
       const k=(i*NC+j)*3;
       positions[k]=x; positions[k+1]=y; positions[k+2]=z;
-      // Floor reads brightest, walls dim slightly so neon obstacles still pop.
       const h = y - baseY;
       const ad = Math.abs(d);
+      // Multi-scale noise gives the wall surface texture: small features
+      // (rocks, cracks), medium patches (moss/sand) and broad shading.
+      const n1 = pnoise(x*0.18, z*0.18);                  // fine detail
+      const n2 = pnoise(x*0.04 + 13.7, z*0.04 - 21.3);    // patches
+      const n3 = pnoise(x*0.012 + 71, z*0.012 + 9);       // broad zones
+      // Base natural colour
+      const c = naturalColor(h, biome);
+      let r=c[0], g=c[1], b=c[2];
+      // Fine speckle: brightens highlights and darkens cracks
+      const speck = 0.85 + n1*0.30;
+      r*=speck; g*=speck; b*=speck;
+      // Patch tinting on walls only — moss/lichen on rock, sandy seams
+      // on dirt, dark veins through stone. Floor stays clean grass.
+      if(ad > 38){
+        const wallStrength = Math.min(1, (ad-38)/40);
+        // moss / lichen patches: slight green-cyan tint where n2 high
+        if(n2 > 0.15 && h > 12 && h < 50){
+          const t = Math.min(1, (n2-0.15)*2.5) * wallStrength * 0.55;
+          r = r*(1-t) + 0.30*t;
+          g = g*(1-t) + 0.55*t;
+          b = b*(1-t) + 0.32*t;
+        }
+        // dark mineral veins: where n2 is low, tint toward charcoal
+        if(n2 < -0.15){
+          const t = Math.min(1, (-n2-0.15)*2.5) * wallStrength * 0.45;
+          r = r*(1-t) + 0.18*t;
+          g = g*(1-t) + 0.16*t;
+          b = b*(1-t) + 0.20*t;
+        }
+        // sandy / clay seams in the lower wall band
+        if(n3 > 0.20 && h < 25){
+          const t = Math.min(1, (n3-0.20)*2.5) * wallStrength * 0.5;
+          r = r*(1-t) + 0.62*t;
+          g = g*(1-t) + 0.50*t;
+          b = b*(1-t) + 0.30*t;
+        }
+        // snow drift extension into rock band where n3 is very high
+        if(n3 > 0.30 && h > 38){
+          const t = Math.min(1, (n3-0.30)*3.0) * wallStrength * 0.55;
+          r = r*(1-t) + 0.92*t;
+          g = g*(1-t) + 0.95*t;
+          b = b*(1-t) + 0.99*t;
+        }
+      } else {
+        // Floor: subtle grass/dirt mottling
+        const t = (n2 + n1*0.4)*0.18;
+        r += t*0.10; g += t*0.04; b -= t*0.02;
+      }
+      // Brightness: floor full, walls dim slightly so neon pops, with
+      // a touch of dark ambient occlusion in crevasses.
       const dim = ad < 38 ? 1.00
                  : Math.max(0.55, 1.00 - (ad-38)*0.008);
-      const ao = 0.88 + (Math.sin(x*0.11 + z*0.08)*0.5+0.5)*0.12;
-      const c = naturalColor(h, biome);
+      const ao = 0.85 + n1*0.10 + n2*0.05;
       const k2 = dim * ao;
-      colors[k]=Math.min(1,c[0]*k2); colors[k+1]=Math.min(1,c[1]*k2); colors[k+2]=Math.min(1,c[2]*k2);
+      colors[k]=Math.max(0,Math.min(1,r*k2));
+      colors[k+1]=Math.max(0,Math.min(1,g*k2));
+      colors[k+2]=Math.max(0,Math.min(1,b*k2));
     }
   }
   // Solid triangulation between adjacent slices/samples. Vertex colours
@@ -833,6 +883,33 @@ function placePickup(worldX, worldY, worldZ, tang){
   return g;
 }
 
+// Prize: a bonus goal — golden spinning octahedron sitting on the
+// valley floor. Worth a chunky distance bonus when collected.
+function placePrize(worldX, worldY, worldZ){
+  const g=new THREE.Group();
+  const gem=new THREE.Mesh(
+    new THREE.OctahedronGeometry(2.6, 0),
+    new THREE.MeshStandardMaterial({color:0xffe055, emissive:0xffaa00, emissiveIntensity:1.6, roughness:0.25, metalness:0.3})
+  );
+  g.add(gem);
+  if(!EXPL_TEX){ EXPL_TEX=makeFireballTexture(); SMOKE_TEX=makeSmokeTexture(); }
+  const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, color:0xffd84a}));
+  halo.scale.set(8,8,8);
+  g.add(halo);
+  // pedestal beam — a thin upright cylinder so it's visible from far away
+  const beam=new THREE.Mesh(
+    new THREE.CylinderGeometry(0.25,0.25,12,8),
+    new THREE.MeshBasicMaterial({color:0xffe055, transparent:true, opacity:0.55})
+  );
+  beam.position.y=-6;
+  g.add(beam);
+  g.position.set(worldX, worldY, worldZ);
+  scene.add(g);
+  OBSTACLES.push({mesh:g, kind:'prize', pos:new THREE.Vector3(worldX, worldY, worldZ), r:3.5,
+    phase:Math.random()*Math.PI*2, gem:gem, halo:halo, collected:false});
+  return g;
+}
+
 function placeTurret(worldX, worldY, worldZ, tang, side){
   const g=new THREE.Group();
   const mat=new THREE.MeshStandardMaterial({color:0x333840, roughness:0.7, metalness:0.3});
@@ -895,19 +972,22 @@ function populateObstacles(spline){
     }
     prevPylon = pylonTop;
   }
-  // turrets — perched on the wall rim so they sit on level ground and
-  // have a clean line of sight down into the trench.
-  const turretStep = 220/densityMul;
-  for(let d=260; d<len-80; d+=turretStep + Math.random()*80){
+  // turrets — placed thickly along both wall rims, often on BOTH sides
+  // at the same point so the player gets crossfire.
+  const turretStep = 110/densityMul;
+  for(let d=160; d<len-80; d+=turretStep + Math.random()*40){
     const t=d/len;
     const p=spline.getPointAt(t);
     const tang=spline.getTangentAt(t).normalize();
-    const bx=-tang.z, bz=tang.x; // binormal (up×tang)
-    const side = (Math.random()<0.5?-1:1);
-    const off = 95 + Math.random()*25; // on the plateau above the trench
-    const wx=p.x+bx*side*off, wz=p.z+bz*side*off;
-    const wy=groundY(wx,wz);
-    placeTurret(wx, wy, wz, tang, side);
+    const bx=-tang.z, bz=tang.x;
+    const off = 82 + Math.random()*20; // just inside the plateau, closer than before
+    // place on one side always; ~40% of the time on both sides for crossfire
+    const sides = Math.random()<0.4 ? [-1,+1] : [Math.random()<0.5?-1:1];
+    for(const s of sides){
+      const wx=p.x+bx*s*off, wz=p.z+bz*s*off;
+      const wy=groundY(wx,wz);
+      placeTurret(wx, wy, wz, tang, s);
+    }
   }
   // arches
   const archStep = 380/densityMul;
@@ -951,11 +1031,24 @@ function populateObstacles(spline){
     const tang=spline.getTangentAt(t).normalize();
     const nx=-tang.z, nz=tang.x;
     const side=Math.random()<0.5?-1:1;
-    const lat=(Math.random()*0.8)*side*6; // 0..4.8 m off centre
+    const lat=(Math.random()*0.8)*side*6;
     const x=p.x + nx*lat;
     const z=p.z + nz*lat;
-    const y=p.y + 10 + Math.random()*18; // cruise altitude band
+    const y=p.y + 10 + Math.random()*18;
     placePickup(x,y,z, tang);
+  }
+  // gold prizes — sit on the valley floor with a vertical beacon
+  const prizeStep = 700;
+  for(let d=420; d<len-60; d+=prizeStep + Math.random()*250){
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t).normalize();
+    const nx=-tang.z, nz=tang.x;
+    const lat=(Math.random()-0.5)*8;       // tiny wobble around centre
+    const x=p.x + nx*lat;
+    const z=p.z + nz*lat;
+    const y=groundY(x,z) + 3.0;            // hovering just above the floor
+    placePrize(x,y,z);
   }
 }
 
@@ -1841,14 +1934,34 @@ function step(dt){
         o.halo.material.dispose();
         OBSTACLES.splice(i,1);
       }
+    } else if(o.kind==='prize' && !o.collected){
+      // gold gem spin + halo pulse
+      o.gem.rotation.y += dt*1.4;
+      o.gem.rotation.x += dt*0.7;
+      const pulse = 1 + 0.30*Math.sin(tNow*5 + o.phase);
+      o.halo.scale.set(8*pulse, 8*pulse, 8*pulse);
+      // collect on contact
+      const dx=H.pos.x-o.mesh.position.x, dy=H.pos.y-o.mesh.position.y, dz=H.pos.z-o.mesh.position.z;
+      if(dx*dx+dy*dy+dz*dz < (o.r+3.5)*(o.r+3.5)){
+        o.collected=true;
+        DIST += 500;          // big distance bonus = score
+        grantLife(0.20);      // small life refill too
+        // gold sparkle burst
+        for(let k=0;k<10;k++){
+          const v=new THREE.Vector3((Math.random()-0.5)*8, Math.random()*4, (Math.random()-0.5)*8);
+          spawnFireball(o.mesh.position.clone(), 2.5+Math.random()*1.6, 0.6+Math.random()*0.4, v);
+        }
+        scene.remove(o.mesh);
+        OBSTACLES.splice(i,1);
+      }
     } else if(o.kind==='turret' && o.active){
       const dx=H.pos.x-o.pos.x, dz=H.pos.z-o.pos.z;
       const d2=dx*dx+dz*dz;
-      if(d2 > 380*380) continue;
+      if(d2 > 500*500) continue;
       o.cooldown -= dt;
-      if(o.cooldown<=0 && d2 < 280*280){
+      if(o.cooldown<=0 && d2 < 420*420){
         spawnMissile(o.barrelBase, H.pos);
-        o.cooldown = (2.2+Math.random()*1.5) * diffCD;
+        o.cooldown = (1.0+Math.random()*1.0) * diffCD;
       }
     }
   }
@@ -2251,6 +2364,8 @@ function goMenu(){
   document.getElementById('fireBtn').style.display='none';
   stickBaseEl.style.display='none';
   releaseStick();
+  // Silence the rotor — otherwise the hum keeps playing in the menu.
+  if(rotorGain && AC){ rotorGain.gain.setTargetAtTime(0, AC.currentTime, 0.05); }
   document.getElementById('overlay').style.display='flex';
   hudCtx.clearRect(0,0,window.innerWidth,window.innerHeight);
 }
