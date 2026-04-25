@@ -1831,21 +1831,21 @@ function step(dt){
   // (squaring an input <1 shrinks it), a dead-zone removes jitter, and
   // modest target angles keep the horizon steady. The helicopter almost
   // flies itself; the stick nudges it.
-  // Responsive stick: small deadzone, near-linear response, snappy lerps.
-  const dz = v => (Math.abs(v)<0.07 ? 0 : Math.sign(v)*(Math.abs(v)-0.07)/0.93);
-  // Mild expo (^1.4) keeps centre control without muting full stick.
-  const shape = v => Math.sign(v) * Math.pow(Math.abs(v), 1.4);
+  // Responsive but not twitchy — halfway between the old gentle stick
+  // and the very snappy one.
+  const dz = v => (Math.abs(v)<0.11 ? 0 : Math.sign(v)*(Math.abs(v)-0.11)/0.89);
+  const shape = v => Math.sign(v) * Math.pow(Math.abs(v), 1.7);
   const rollIn  = shape(dz(IN.roll));
   const pitchIn = shape(dz(IN.pitch));
-  const targetRoll  = rollIn  * 0.62;  // ~36° max bank
-  const targetPitch = pitchIn * 0.40;  // ~23° max pitch
-  const rollLerp  = 1 - Math.exp(-dt*7.0);
-  const pitchLerp = 1 - Math.exp(-dt*6.0);
+  const targetRoll  = rollIn  * 0.50;  // ~29° max bank
+  const targetPitch = pitchIn * 0.31;  // ~18° max pitch
+  const rollLerp  = 1 - Math.exp(-dt*4.9);
+  const pitchLerp = 1 - Math.exp(-dt*4.2);
   H.ang.z += ((-targetRoll)  - H.ang.z) * rollLerp;
   H.ang.x += (( targetPitch) - H.ang.x) * pitchLerp;
   // Auto-level when stick is near centre.
-  if(Math.abs(IN.roll)<0.10)  H.ang.z *= (1 - Math.min(1,dt*3.5));
-  if(Math.abs(IN.pitch)<0.10) H.ang.x *= (1 - Math.min(1,dt*3.0));
+  if(Math.abs(IN.roll)<0.14)  H.ang.z *= (1 - Math.min(1,dt*4.0));
+  if(Math.abs(IN.pitch)<0.14) H.ang.x *= (1 - Math.min(1,dt*3.5));
 
   // Rebuild orientation from heading + current roll/pitch
   // Extract current heading (yaw)
@@ -1855,7 +1855,7 @@ function step(dt){
   // banks right and turns right (Three.js YXZ: +Y yaw turns LEFT, so we
   // need yawRate to be negative when H.ang.z is negative, i.e. same sign).
   // Softer turn gain so banking feels like a gentle curve, not a whip.
-  const turnRate = H.ang.z * 1.8; // rad/s — punchier turns
+  const turnRate = H.ang.z * 1.4; // rad/s
   yaw += turnRate * dt;
   // Recompose
   H.quat.setFromEuler(new THREE.Euler(H.ang.x, yaw, H.ang.z, 'YXZ'));
@@ -1873,11 +1873,11 @@ function step(dt){
   const cruise  = diffSpd * boostF * lvlMul;
   const targetVel = forwardTmp.clone().multiplyScalar(cruise);
   // Climb/dive overlay from pitch — gentler so altitude doesn't swing wildly
-  const climb = H.ang.x * 18.0;          // m/s — fast altitude changes
+  const climb = H.ang.x * 12.5;          // m/s
   targetVel.y += climb;
 
-  // Ease current velocity toward target — quick to react, no inertia drag.
-  const accel = 1 - Math.exp(-dt*5.0);
+  // Ease current velocity toward target.
+  const accel = 1 - Math.exp(-dt*3.6);
   H.vel.lerp(targetVel, accel);
 
   // Integrate position
