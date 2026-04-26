@@ -591,17 +591,13 @@ function buildTerrain(){
   // so the valley doesn't look perfectly uniform along its length.
   // Conventional natural palette: grass at the floor, dirt on the lower
   // wall, rock further up, light grey at the rim. Clean and uniform.
-  // Discrete geological strata — no smooth blending between bands. Reads
-  // as solid layered rock instead of a colour wash. Each band has a
-  // single base colour, with only small per-vertex variation on top.
+  // Wireframe colour: bright white at the rim, soft cyan-white lower
+  // down so the floor reads slightly different from the cliff face.
   const naturalColor = (h)=>{
-    if(h < 2)        return [0.32, 0.55, 0.26];   // grass
-    if(h < 8)        return [0.42, 0.42, 0.22];   // turf / scrub
-    if(h < 18)       return [0.55, 0.40, 0.22];   // earth / dirt
-    if(h < 30)       return [0.48, 0.38, 0.30];   // packed clay
-    if(h < 45)       return [0.50, 0.46, 0.42];   // stone
-    if(h < 62)       return [0.62, 0.58, 0.54];   // weathered rock
-    return [0.74, 0.71, 0.66];                    // light limestone
+    if(h < 4)        return [0.55, 1.00, 0.85];   // soft cyan-green floor lines
+    if(h < 25)       return [0.75, 0.95, 1.00];   // pale blue-white wall
+    if(h < 55)       return [0.92, 0.97, 1.00];   // crisp white rock
+    return [1.00, 1.00, 1.00];                    // bright white rim
   };
   const PN_SCALE = 1/26;   // pnoise returns roughly +-26
   for(let i=0;i<SLICES;i++){
@@ -641,19 +637,24 @@ function buildTerrain(){
   // carry the natural grass/dirt/rock/snow palette; MeshBasicMaterial
   // gives flat unshaded fills — exactly the cartoon look we want.
   const indices=[];
-  for(let i=0;i<SLICES-1;i++){
+  // WIREFRAME terrain: rungs (cross-section) + rails (along-road).
+  // No triangle diagonals — clean Tron / Battlezone grid.
+  for(let i=0;i<SLICES;i++){
     for(let j=0;j<NC-1;j++){
-      const a=i*NC+j, b=i*NC+(j+1), c=(i+1)*NC+j, d=(i+1)*NC+(j+1);
-      indices.push(a,c,b, b,c,d);
+      indices.push(i*NC+j, i*NC+(j+1));
+    }
+  }
+  for(let i=0;i<SLICES-1;i++){
+    for(let j=0;j<NC;j++){
+      indices.push(i*NC+j, (i+1)*NC+j);
     }
   }
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
   geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
   geo.setIndex(indices);
-  geo.computeVertexNormals();
-  const mat=new THREE.MeshBasicMaterial({vertexColors:true});
-  return new THREE.Mesh(geo, mat);
+  const mat=new THREE.LineBasicMaterial({vertexColors:true});
+  return new THREE.LineSegments(geo, mat);
 }
 
 // ─── TREES (InstancedMesh) ────────────────────────────────
@@ -2114,8 +2115,9 @@ function buildWorld(){
 
   terrain = buildTerrain(); scene.add(terrain);
   roadObj = buildRoad(spline); scene.add(roadObj);
-  buildTrees();
-  buildGrass();
+  // wireframe mode: skip decorative ground cover that would break the look
+  // buildTrees();
+  // buildGrass();
   populateObstacles(spline);
   buildHeli();
   applyArcadeLook();
@@ -2126,19 +2128,18 @@ function buildWorld(){
 // from its palette, so a row of pylons is cyan/teal/aqua/turquoise
 // rather than five identical cyan copies. Each kind keeps a consistent
 // mood (pylons cool, turrets red, etc.) while the scene gets variety.
-// Conventional, more realistic palette. Per-kind variety stays small
-// so the scene reads as a coherent military / civilian zone instead of
-// a neon arcade.
+// WIREFRAME mode: white for neutral structures, RED for hostile things,
+// dim grey for cables. Pickups + missiles stay bright via emissive path.
 const KIND_PALETTE = {
-  pylon:   [0xb6b6c0, 0xa0a0a8, 0xc0b8b0],          // weathered metal grey
-  arch:    [0xc6a058, 0xb8924a, 0xa07d3d],          // ochre / industrial yellow
-  bldg:    [0xe8d5a8, 0xd4be90, 0xc8a878, 0xe0caa0],// sandy beige walls
-  turret:  [0x6a7050, 0x5d6448, 0x747a55],          // olive military
-  cable:   [0x444444, 0x383838, 0x4f4f4f],          // dark grey
-  balloon: [0xee4422, 0xeebb22, 0x2266ee, 0x44bb22],// bright primaries
-  rock:    [0x6a5a44, 0x5a4c3a, 0x6f6150],          // earth tones, three only
-  truck:   [0x3a6e9c, 0xb89638, 0x9a4a2c, 0x4a6e3a],// muted civilian
-  tank:    [0x4f5a3a, 0x586247, 0x44502c],          // olive drab
+  pylon:   [0xffffff, 0xeeeeff, 0xddddee],
+  arch:    [0xffffff, 0xeeffff],
+  bldg:    [0xffffff, 0xeeeeff, 0xddeeff],
+  turret:  [0xff3333, 0xff5555, 0xff2222],   // RED — danger
+  cable:   [0x888888, 0x666666],
+  balloon: [0xffffff, 0xeeffff],
+  rock:    [0xffffff, 0xdddddd, 0xeeeeee],
+  truck:   [0xffffff, 0xeeeeee],
+  tank:    [0xff3333, 0xff4444, 0xcc2222],   // RED — danger
 };
 const ROAD_COLOR = 0xffffff;
 // Trench walls cycle through a palette as you fly along the road so the
@@ -2176,9 +2177,10 @@ const ARCADE_WX = {
 function applyArcadeLook(){
   const tod = ARCADE_TOD[STATE.tod] || ARCADE_TOD.night;
   const wx  = ARCADE_WX[STATE.wx]  || ARCADE_WX.clear;
-  // void background + tight fog from TOD, thickened by weather
-  scene.background = new THREE.Color(tod.bg);
-  scene.fog = new THREE.FogExp2(tod.fog, tod.fogD * wx.fogMul);
+  // WIREFRAME mode: pure black void regardless of TOD; fog fades distant
+  // lines into black for that classic arcade trench look.
+  scene.background = new THREE.Color(0x000000);
+  scene.fog = new THREE.FogExp2(0x000000, 0.0050 * wx.fogMul);
   // hide the painterly sky / sun (their textures would break the arcade look)
   if(sky){ sky.visible = false; }
   if(sunSprite){ sunSprite.visible = false; }
@@ -2237,17 +2239,18 @@ function applyArcadeLook(){
     const emissive = m.emissive && ((m.emissiveIntensity||0) > 0.5);
     let nm;
     if(emissive){
+      // pickups + missiles stay as solid bright blobs (not wireframed)
       const col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15);
       col.multiplyScalar(wx.brightness);
       nm = new THREE.MeshBasicMaterial({color:col});
     } else if(obj===roadObj){
-      nm = new THREE.MeshBasicMaterial({ color:dim(ROAD_COLOR) });
+      nm = new THREE.MeshBasicMaterial({ color:dim(ROAD_COLOR), wireframe:true });
     } else if(rootHex!=null){
-      nm = new THREE.MeshBasicMaterial({ color:dim(rootHex) });
+      nm = new THREE.MeshBasicMaterial({ color:dim(rootHex), wireframe:true });
     } else if(m.color){
-      nm = new THREE.MeshBasicMaterial({ color:m.color.clone().multiplyScalar(wx.brightness) });
+      nm = new THREE.MeshBasicMaterial({ color:m.color.clone().multiplyScalar(wx.brightness), wireframe:true });
     } else {
-      nm = new THREE.MeshBasicMaterial({ color:dim(0x88ffaa) });
+      nm = new THREE.MeshBasicMaterial({ color:dim(0xffffff), wireframe:true });
     }
     obj.userData.retroDone = true;
     obj.material = nm;
@@ -2662,17 +2665,19 @@ function drawCockpitAndHUD(){
   // (on-screen stick is a real DOM element now; no canvas hint needed)
   drawScanlines(w, h);
 }
-// CRT scanlines + soft edge vignette across the whole canvas.
+// CRT scanlines + edge vignette + faint phosphor tint — proper arcade
+// monitor feel for the wireframe scene.
 function drawScanlines(w,h){
   hudCtx.save();
-  hudCtx.fillStyle='rgba(0,0,0,0.28)';
+  // dark scanlines every 3 px
+  hudCtx.fillStyle='rgba(0,0,0,0.40)';
   for(let y=0;y<h;y+=3){
     hudCtx.fillRect(0,y,w,1);
   }
-  // soft edge vignette for CRT feel
-  const vg = hudCtx.createRadialGradient(w*0.5, h*0.5, Math.min(w,h)*0.35, w*0.5, h*0.5, Math.max(w,h)*0.75);
+  // strong edge vignette
+  const vg = hudCtx.createRadialGradient(w*0.5, h*0.5, Math.min(w,h)*0.30, w*0.5, h*0.5, Math.max(w,h)*0.78);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.70)');
   hudCtx.fillStyle = vg;
   hudCtx.fillRect(0,0,w,h);
   hudCtx.restore();
