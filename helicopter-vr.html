@@ -745,52 +745,53 @@ function buildGrass(){
   scene.add(grassTufts);
 }
 function buildTrees(){
-  const trunkG=new THREE.CylinderGeometry(0.3,0.45,2.4,6);
-  trunkG.translate(0,1.2,0);
-  const foliageG=new THREE.ConeGeometry(2.2,5.5,7);
-  foliageG.translate(0,4.3,0);
-  const trunkM=new THREE.MeshStandardMaterial({color:0x553322, flatShading:true, roughness:1});
-  const folM=new THREE.MeshStandardMaterial({color:0x2f6a34, flatShading:true, roughness:1});
-  const N=400;
-  treesA=new THREE.InstancedMesh(trunkG,trunkM,N);
-  treesB=new THREE.InstancedMesh(foliageG,folM,N);
+  // Decorative pine-like trees scattered across the trench floor and the
+  // lower wall slope. No collision (heli passes through harmlessly).
+  // Two InstancedMesh objects: trunks + foliage cones.
+  const N = 700;
+  const trunkG = new THREE.CylinderGeometry(0.35, 0.55, 2.6, 5);
+  trunkG.translate(0, 1.3, 0);
+  const foliageG = new THREE.ConeGeometry(2.0, 5.0, 5);
+  foliageG.translate(0, 4.5, 0);
+  const trunkM = new THREE.MeshBasicMaterial({color:0x55321c});
+  const folM   = new THREE.MeshBasicMaterial({color:0x2f6a34});
+  treesA = new THREE.InstancedMesh(trunkG, trunkM, N);
+  treesB = new THREE.InstancedMesh(foliageG, folM, N);
   treesA.frustumCulled=false; treesB.frustumCulled=false;
+  const greens=[new THREE.Color(0x2f6a34), new THREE.Color(0x256530), new THREE.Color(0x3d8040), new THREE.Color(0x488a3a), new THREE.Color(0x569e44)];
   const m=new THREE.Matrix4(), q=new THREE.Quaternion(), s=new THREE.Vector3(), p=new THREE.Vector3();
-  let placed=0;
-  // Bounded attempts — trench geometry leaves only a narrow rim where
-  // trees fit. Sample along the spline instead of the whole plane, which
-  // guarantees progress and avoids any possibility of an infinite loop.
-  const MAX_TRIES = 40000;
-  let tries=0;
-  while(placed<N && tries<MAX_TRIES){
+  let placed=0, tries=0;
+  while(placed < N && tries < N*5){
     tries++;
-    // Sample a random t along the spline, then offset laterally by 20-28 m
     const t = Math.random();
     const sp = spline.getPointAt(t);
     const tg = spline.getTangentAt(t).normalize();
-    const binorm = new THREE.Vector3(0,1,0).cross(tg).normalize();
-    const side = Math.random() < 0.5 ? -1 : 1;
-    const off = 20 + Math.random()*8;   // 20..28 m from road
-    const jitter = (Math.random()-0.5)*4;
-    const x = sp.x + binorm.x*side*off + tg.x*jitter;
-    const z = sp.z + binorm.z*side*off + tg.z*jitter;
-    const y = groundY(x,z);
-    // skip if it landed on the floor (shouldn't) or beyond the wall top
-    if(y < sp.y || y > sp.y + 55) continue;
-    const sc=0.7+Math.random()*0.9;
-    p.set(x,y,z); s.set(sc,sc,sc); q.setFromAxisAngle(new THREE.Vector3(0,1,0), Math.random()*Math.PI*2);
-    m.compose(p,q,s);
-    treesA.setMatrixAt(placed,m); treesB.setMatrixAt(placed,m);
+    const bin = new THREE.Vector3(0,1,0).cross(tg).normalize();
+    const wMul = widthMul(t);
+    const FLOOR = 38 * wMul;
+    const side = Math.random()<0.5 ? -1 : 1;
+    // Place mostly on the floor, occasionally creeping up the lower slope
+    const lat = (0.30 + Math.random()*0.85) * FLOOR * side; // 0.3..1.15 of floor radius
+    const along = (Math.random()-0.5) * 25;
+    const x = sp.x + bin.x*lat + tg.x*along;
+    const z = sp.z + bin.z*lat + tg.z*along;
+    const y = groundY(x, z);
+    // Skip trees that landed too high on the wall (avoid floating mid-cliff)
+    if(y > sp.y + 8) continue;
+    const sc = 0.9 + Math.random()*1.6;
+    p.set(x, y, z); s.set(sc, sc*(0.85+Math.random()*0.5), sc);
+    q.setFromAxisAngle(new THREE.Vector3(0,1,0), Math.random()*Math.PI*2);
+    m.compose(p, q, s);
+    treesA.setMatrixAt(placed, m);
+    treesB.setMatrixAt(placed, m);
+    treesB.setColorAt(placed, greens[(Math.random()*greens.length)|0]);
     placed++;
   }
-  // Hide any leftover instance slots
-  const hideM = new THREE.Matrix4();
-  hideM.makeScale(0,0,0);
-  for(let i=placed;i<N;i++){
-    treesA.setMatrixAt(i,hideM); treesB.setMatrixAt(i,hideM);
-  }
+  const hide = new THREE.Matrix4().makeScale(0,0,0);
+  for(let i=placed;i<N;i++){ treesA.setMatrixAt(i,hide); treesB.setMatrixAt(i,hide); }
   treesA.instanceMatrix.needsUpdate=true;
   treesB.instanceMatrix.needsUpdate=true;
+  if(treesB.instanceColor) treesB.instanceColor.needsUpdate=true;
   scene.add(treesA); scene.add(treesB);
 }
 
@@ -1109,7 +1110,7 @@ function populateObstacles(spline){
   // jagged rock outcrops jutting from the wall slope — stay clear or
   // you scrape them and lose health. Dense placement: every ~32 m on
   // average, often in clusters on both sides at once.
-  const rockStep = 32/densityMul;
+  const rockStep = 22/densityMul;
   for(let d=80; d<len-80; d+=rockStep + Math.random()*22){
     const t=d/len;
     const p=spline.getPointAt(t);
@@ -1133,17 +1134,22 @@ function populateObstacles(spline){
     const tang=spline.getTangentAt(t);
     placeArch(p,tang);
   }
-  // buildings alongside
-  const bldgStep = 70/densityMul;
-  for(let d=80; d<len-60; d+=bldgStep + Math.random()*40){
-    if(Math.random()>0.45) continue;
+  // buildings alongside — denser settlements; sometimes a small cluster
+  const bldgStep = 35/densityMul;
+  for(let d=80; d<len-60; d+=bldgStep + Math.random()*20){
+    if(Math.random()>0.75) continue;          // skip rate dropped from 0.55 to 0.25
     const t=d/len;
     const p=spline.getPointAt(t);
     const tang=spline.getTangentAt(t);
     const nx=-tang.z, nz=tang.x;
     const side=Math.random()<0.5?-1:1;
-    const off=(18+Math.random()*15)*widthMul(t); // hug wall base, scales with width
+    const off=(18+Math.random()*15)*widthMul(t);
     placeBuilding({x:p.x+nx*off*side, z:p.z+nz*off*side});
+    // occasionally a neighbour building right next to it
+    if(Math.random()<0.35){
+      const off2=(20+Math.random()*12)*widthMul(t);
+      placeBuilding({x:p.x+nx*off2*-side, z:p.z+nz*off2*-side});
+    }
   }
   // balloons — floating at varied altitudes
   const balStep = 260/densityMul;
@@ -1978,7 +1984,7 @@ function buildWorld(){
 
   terrain = buildTerrain(); scene.add(terrain);
   roadObj = buildRoad(spline); scene.add(roadObj);
-  // buildTrees(); // disabled — ribbon terrain leaves no useful rim for trees
+  buildTrees();
   buildGrass();
   populateObstacles(spline);
   buildHeli();
@@ -2075,9 +2081,9 @@ function applyArcadeLook(){
       obj.material.color.setScalar(wx.brightness);
       return;
     }
-    // Grass tufts use per-instance colours via InstancedMesh — keep them
-    // as-is, only dim the material colour multiplier by weather.
-    if(obj===grassTufts && obj.material && obj.material.color){
+    // Grass tufts and trees use per-instance colours via InstancedMesh —
+    // keep them as-is, only dim the material colour multiplier by weather.
+    if((obj===grassTufts || obj===treesA || obj===treesB) && obj.material && obj.material.color){
       obj.material.color.setScalar(wx.brightness);
       return;
     }
