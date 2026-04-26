@@ -2020,12 +2020,17 @@ const TERRAIN_PALETTE = [
   [1.00,0.40,0.30], // coral
 ];
 const TERRAIN_BAND_SLICES = 18; // slices per colour band (~6 km at step 110)
-// Time of day controls only the sky void, fog colour/density and star
-// colour — not the wireframe palette. This keeps the scene colourful.
+// Time of day controls only the sky background, fog colour/density and
+// star colour — not the obstacle palette. Each TOD now looks like the
+// actual time of day instead of a dark void.
 const ARCADE_TOD = {
-  dawn:  { bg:0x180a04, fog:0x3a140a, fogD:0.0055, starCol:0xffd9a6 },
-  noon:  { bg:0x000c1c, fog:0x00132a, fogD:0.0040, starCol:0xffffff },
-  dusk:  { bg:0x1a0620, fog:0x360a38, fogD:0.0058, starCol:0xffbce0 },
+  // Dawn — pink / peach horizon, warm haze.
+  dawn:  { bg:0xd9886a, fog:0xe6a888, fogD:0.0040, starCol:0xffd9a6 },
+  // Noon — bright daytime sky with a soft blue haze in the distance.
+  noon:  { bg:0x77baee, fog:0xc6def0, fogD:0.0030, starCol:0xffffff },
+  // Dusk — red / orange sunset bleeding into purple.
+  dusk:  { bg:0x9c4a4a, fog:0xc97a4a, fogD:0.0048, starCol:0xffbce0 },
+  // Night — pure black void with bright stars.
   night: { bg:0x000000, fog:0x000a04, fogD:0.0060, starCol:0x88ffaa },
 };
 // Weather: thicker fog + overall dimming. Storm keeps the lightning.
