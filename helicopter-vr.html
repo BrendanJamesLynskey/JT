@@ -1036,6 +1036,89 @@ function placeRock(worldX, worldY, worldZ, scale){
   return g;
 }
 
+// Truck — civilian-coloured cab + container trailer + six wheels.
+// Solid obstacle (damaging) and bullet-destructible.
+function placeTruck(worldX, worldY, worldZ, rotY){
+  const g=new THREE.Group();
+  const cab=new THREE.Mesh(
+    new THREE.BoxGeometry(2.4, 2.0, 2.6),
+    new THREE.MeshBasicMaterial({color:0x4488cc})
+  );
+  cab.position.set(0, 1.6, -1.6);
+  g.add(cab);
+  const trailer=new THREE.Mesh(
+    new THREE.BoxGeometry(2.6, 2.4, 5.0),
+    new THREE.MeshBasicMaterial({color:0xddcc55})
+  );
+  trailer.position.set(0, 1.8, 1.6);
+  g.add(trailer);
+  const wheelG=new THREE.CylinderGeometry(0.55, 0.55, 0.45, 8);
+  wheelG.rotateZ(Math.PI/2);
+  const wheelM=new THREE.MeshBasicMaterial({color:0x222222});
+  const ws=[[-1.05,-2.1],[1.05,-2.1],[-1.15,1.0],[1.15,1.0],[-1.15,3.2],[1.15,3.2]];
+  for(const [wx,wz] of ws){
+    const w=new THREE.Mesh(wheelG, wheelM);
+    w.position.set(wx, 0.55, wz);
+    g.add(w);
+  }
+  g.position.set(worldX, worldY, worldZ);
+  g.rotation.y = rotY;
+  scene.add(g);
+  OBSTACLES.push({mesh:g, kind:'truck',
+    pos:new THREE.Vector3(worldX, worldY+1.6, worldZ),
+    r:4.0, hitTop:worldY+4, hitBot:worldY-0.5});
+  return g;
+}
+
+// Enemy tank — hull + rotating turret + barrel + treads. Fires missiles
+// like a wall turret but from the floor.
+function placeTank(worldX, worldY, worldZ, rotY){
+  const g=new THREE.Group();
+  const hull=new THREE.Mesh(
+    new THREE.BoxGeometry(3.6, 1.4, 5.2),
+    new THREE.MeshBasicMaterial({color:0x556644})
+  );
+  hull.position.set(0, 0.95, 0);
+  g.add(hull);
+  const tur=new THREE.Mesh(
+    new THREE.CylinderGeometry(1.2, 1.4, 1.0, 12),
+    new THREE.MeshBasicMaterial({color:0x445533})
+  );
+  tur.position.set(0, 2.1, 0);
+  g.add(tur);
+  const barrel=new THREE.Mesh(
+    new THREE.BoxGeometry(0.32, 0.32, 3.5),
+    new THREE.MeshBasicMaterial({color:0x222222})
+  );
+  barrel.position.set(0, 2.1, -2.3);
+  g.add(barrel);
+  const trackG=new THREE.BoxGeometry(0.7, 0.7, 5.4);
+  const trackM=new THREE.MeshBasicMaterial({color:0x222222});
+  const tL=new THREE.Mesh(trackG, trackM); tL.position.set(-1.85, 0.35, 0); g.add(tL);
+  const tR=new THREE.Mesh(trackG, trackM); tR.position.set( 1.85, 0.35, 0); g.add(tR);
+  // small red warning lamp on the turret
+  const lamp=new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 8, 6),
+    new THREE.MeshBasicMaterial({color:0xff2222})
+  );
+  lamp.position.set(0, 2.7, 0);
+  g.add(lamp);
+  g.position.set(worldX, worldY, worldZ);
+  g.rotation.y = rotY;
+  scene.add(g);
+  // barrel tip in world coords for missile spawn
+  const barrelLocal=new THREE.Vector3(0, 2.1, -4.0);
+  const barrelWorld=barrelLocal.clone().applyQuaternion(
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0))
+  ).add(g.position);
+  OBSTACLES.push({mesh:g, kind:'tank',
+    pos:new THREE.Vector3(worldX, worldY+1.5, worldZ),
+    r:4.5, hitTop:worldY+3.2, hitBot:worldY-0.5,
+    barrelBase:barrelWorld,
+    cooldown:2.5+Math.random()*2.0, active:true});
+  return g;
+}
+
 function placeTurret(worldX, worldY, worldZ, tang, side){
   const g=new THREE.Group();
   const mat=new THREE.MeshStandardMaterial({color:0x333840, roughness:0.7, metalness:0.3});
@@ -1120,7 +1203,7 @@ function populateObstacles(spline){
     }
   }
   // jagged rock outcrops jutting from the wall slope.
-  const rockStep = 14/densityMul;
+  const rockStep = 10/densityMul;
   for(let d=80; d<len-80; d+=rockStep + Math.random()*14){
     const t=d/len;
     const p=spline.getPointAt(t);
@@ -1168,7 +1251,7 @@ function populateObstacles(spline){
     placeArch(p,tang);
   }
   // buildings alongside — denser settlements; sometimes a small cluster
-  const bldgStep = 35/densityMul;
+  const bldgStep = 22/densityMul;
   for(let d=80; d<len-60; d+=bldgStep + Math.random()*20){
     if(Math.random()>0.75) continue;          // skip rate dropped from 0.55 to 0.25
     const t=d/len;
@@ -1224,6 +1307,38 @@ function populateObstacles(spline){
     const z=p.z + nz*lat;
     const y=groundY(x,z) + 10.0;           // shorter pillar — gem at ~10 m
     placePrize(x,y,z);
+  }
+  // trucks — civilian/cargo vehicles parked beside the road on the floor.
+  const truckStep = 180/densityMul;
+  for(let d=120; d<len-60; d+=truckStep + Math.random()*80){
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t).normalize();
+    const nx=-tang.z, nz=tang.x;
+    const wMul=widthMul(t);
+    const side=Math.random()<0.5?-1:1;
+    const off=(8+Math.random()*22)*wMul;          // 8..30 m off centre
+    const x=p.x+nx*side*off, z=p.z+nz*side*off;
+    const y=groundY(x,z);
+    // align roughly with the road, with random 180° flip
+    const rotY = Math.atan2(tang.x, tang.z) + (Math.random()<0.5?0:Math.PI);
+    placeTruck(x, y, z, rotY);
+  }
+  // enemy tanks — hostile ground units on the trench floor that fire missiles.
+  const tankStep = 260/densityMul;
+  for(let d=200; d<len-60; d+=tankStep + Math.random()*120){
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t).normalize();
+    const nx=-tang.z, nz=tang.x;
+    const wMul=widthMul(t);
+    const side=Math.random()<0.5?-1:1;
+    const off=(6+Math.random()*22)*wMul;
+    const x=p.x+nx*side*off, z=p.z+nz*side*off;
+    const y=groundY(x,z);
+    // tanks face roughly toward the road (so the barrel points inward)
+    const inwardYaw = Math.atan2(-nx*side, -nz*side);
+    placeTank(x, y, z, inwardYaw);
   }
 }
 
@@ -1549,13 +1664,13 @@ function tickEnemies(dt){
   nextEnemyT -= dt;
   if(nextEnemyT<=0 && H.alive && !STATE.over){
     // Aggressive spawn: one bandit, often a wing-man, sometimes a third.
-    const cap = 12 + STATE.level*3;
+    const cap = 18 + STATE.level*4;
     if(ENEMIES.length < cap){
       spawnEnemy();
       if(Math.random()<0.55 && ENEMIES.length < cap) spawnEnemy();
       if(Math.random()<0.20 && ENEMIES.length < cap) spawnEnemy();
     }
-    const interval = Math.max(1.0, 3 - STATE.level*0.3);
+    const interval = Math.max(0.7, 2.4 - STATE.level*0.3);
     nextEnemyT = interval + Math.random()*1.0;
   }
   for(let i=ENEMIES.length-1;i>=0;i--){
@@ -1817,6 +1932,16 @@ function tickBullets(dt){
             hit = (dx*dx+dz*dz < r*r) && by > (o.hitBot-1) && by < (o.hitTop+1);
             break;
           }
+          case 'truck':   {
+            const r=4.0;
+            hit = (dx*dx+dz*dz < r*r) && by > (o.hitBot-1) && by < (o.hitTop+1);
+            break;
+          }
+          case 'tank':    {
+            const r=4.5;
+            hit = (dx*dx+dz*dz < r*r) && by > (o.hitBot-1) && by < (o.hitTop+1);
+            break;
+          }
           default: continue;
         }
         if(hit){
@@ -1824,8 +1949,8 @@ function tickBullets(dt){
           if(o.hp==null){
             o.hp = (o.kind==='balloon'||o.kind==='cable'||o.kind==='turret') ? 1
                  : (o.kind==='pylon') ? 2
-                 : (o.kind==='bldg')  ? 3
-                 : (o.kind==='arch')  ? 4
+                 : (o.kind==='bldg' || o.kind==='truck') ? 3
+                 : (o.kind==='arch' || o.kind==='tank')  ? 4
                  : 1;
           }
           o.hp -= 1;
@@ -2038,6 +2163,8 @@ const KIND_PALETTE = {
   balloon: [0xff9966, 0xff4488, 0x66ff99, 0xffcc33, 0x99aaff, 0xff66ff, 0xffaa44, 0x55ffdd],
   // Rocks read as natural earth-tones so they stand out from neon obstacles.
   rock:    [0x6b5641, 0x564636, 0x4a3a2a, 0x7a6856, 0x5a4838, 0x65503e],
+  truck:   [0x4488cc, 0xddcc55, 0xcc8855, 0x99aa44, 0xee9966, 0x66aaee],
+  tank:    [0x556644, 0x445533, 0x6c7044, 0x4f5a2c, 0x6a5530, 0x40503a],
 };
 const ROAD_COLOR = 0xffffff;
 // Trench walls cycle through a palette as you fly along the road so the
@@ -2166,7 +2293,7 @@ function checkCollisions(){
     const dx=px-o.pos.x, dz=pz-o.pos.z;
     const dh=Math.sqrt(dx*dx+dz*dz);
     if(dh > 120) continue;
-    if(o.kind==='pylon'||o.kind==='arch'||o.kind==='bldg'||o.kind==='turret'||o.kind==='rock'){
+    if(o.kind==='pylon'||o.kind==='arch'||o.kind==='bldg'||o.kind==='turret'||o.kind==='rock'||o.kind==='truck'||o.kind==='tank'){
       if(dh < o.r+1.5 && py > o.hitBot && py < o.hitTop){
         return o.kind;
       }
@@ -2403,6 +2530,16 @@ function step(dt){
         spawnMissile(o.barrelBase, H.pos);
         o.cooldown = (1.0+Math.random()*1.0) * diffCD;
       }
+    } else if(o.kind==='tank' && o.active){
+      const dx=H.pos.x-o.pos.x, dz=H.pos.z-o.pos.z;
+      const d2=dx*dx+dz*dz;
+      if(d2 > 600*600) continue;
+      o.cooldown -= dt;
+      if(o.cooldown<=0 && d2 < 500*500){
+        spawnMissile(o.barrelBase, H.pos);
+        // tanks fire a bit slower than wall turrets
+        o.cooldown = (1.6+Math.random()*1.4) * diffCD;
+      }
     }
   }
 
@@ -2422,7 +2559,7 @@ function step(dt){
 
 // Shield damage on a non-fatal hit. When shield runs out, it's game over.
 // Damage amounts per hit source (fraction of full life).
-const DMG = { TERRAIN:0.15, MISSILE:0.20, PYLON:0.28, ARCH:0.28, BLDG:0.28, TURRET:0.22, CABLE:0.22, BALLOON:0.15, ROCK:0.20, ENEMY:0.22 };
+const DMG = { TERRAIN:0.15, MISSILE:0.20, PYLON:0.28, ARCH:0.28, BLDG:0.28, TURRET:0.22, CABLE:0.22, BALLOON:0.15, ROCK:0.20, ENEMY:0.22, TRUCK:0.22, TANK:0.30 };
 function damageLife(cause){
   if(H.invuln>0 || !H.alive) return;
   const amt = DMG[cause] != null ? DMG[cause] : 0.22;
@@ -2875,6 +3012,8 @@ const QUIPS={
   MISSILE:'A turret remembered your name.',
   ROCK:'That outcrop wasn\'t bluffing.',
   ENEMY:'A bandit got the better of you.',
+  TRUCK:'You can\'t outrun a parked truck.',
+  TANK:'A tank shell stopped you cold.',
   TURRET:'The turret won the stand-off.',
 };
 function gameOver(cause){
