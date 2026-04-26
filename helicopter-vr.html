@@ -445,16 +445,18 @@ function groundY(x,z){
     valleyY = baseY - 1.2 + wallH + (d - WALL_R) * 1.4;
   }
   const wallMix = Math.min(1, Math.max(0, (d - FLOOR_R) / 50));
-  const n = pnoise(x,z);
-  return valleyY + n * (0.08 + 1.6 * wallMix);
+  const n = pnoise(x,z) * (1/26);
+  return valleyY + n * (1.0 + 12.0 * wallMix);
 }
 // Long-wave undulation of the wall-top height. Combines two slow noise
 // scales so the rim rises and falls along the road by ±25 m or so,
 // instead of staying at a uniform 70 m. Used by both groundY (collision)
 // and valleyY (terrain mesh) so they stay consistent.
 function wallHeightAt(x, z){
-  const a = pnoise(x*0.011 + 13.7, z*0.011 - 4.2);   // big rolling waves
-  const b = pnoise(x*0.034 - 7.1,  z*0.034 + 9.5);   // mid features
+  // pnoise() returns roughly +-26, so scale before mixing.
+  const PN = 1/26;
+  const a = pnoise(x*0.011 + 13.7, z*0.011 - 4.2) * PN;
+  const b = pnoise(x*0.034 - 7.1,  z*0.034 + 9.5) * PN;
   const m = a*0.7 + b*0.35;                          // ~ -1.05..+1.05
   return 70 + m * 22;                                // ~48..92 m wall top
 }
@@ -570,7 +572,8 @@ function valleyY(baseY, d, x, z, w){
   else if(ad<WALL_R){ const tt=(ad-FLOOR_R)/(WALL_R-FLOOR_R); const e=tt*tt*(3-2*tt); y = baseY - 1.2 + e*wallH; }
   else y = baseY - 1.2 + wallH + (ad-WALL_R)*1.4;
   const wallMix = Math.min(1, Math.max(0, (ad-FLOOR_R)/50));
-  return y + pnoise(x,z) * (0.08 + 1.6*wallMix);
+  const n = pnoise(x,z) * (1/26);
+  return y + n * (1.0 + 12.0*wallMix);
 }
 function buildTerrain(){
   // Solid ribbon mesh extruded along the spline. Cartoon-style flat
@@ -586,40 +589,34 @@ function buildTerrain(){
   // Natural terrain: grass on the floor → dirt on the slope → rock on
   // the upper wall → snow at the rim. Subtle longitudinal biome shift
   // so the valley doesn't look perfectly uniform along its length.
-  const naturalColor = (h, biome)=>{
-    // h = height above road floor; biome = 0..1 mixes lush <-> arid
+  // Conventional natural palette: grass at the floor, dirt on the lower
+  // wall, rock further up, light grey at the rim. Clean and uniform.
+  const naturalColor = (h)=>{
     let r,g,b;
-    if(h < 1.5){                // grass floor
-      r=0.22; g=0.52; b=0.20;
-    } else if(h < 12){          // grass → dirt
-      const t=(h-1.5)/10.5;
-      r=0.22+t*0.28; g=0.52-t*0.18; b=0.20-t*0.05;
-    } else if(h < 35){          // dirt → rock
-      const t=(h-12)/23;
-      r=0.50-t*0.05; g=0.34-t*0.02; b=0.15+t*0.25;
-    } else if(h < 60){           // rock
-      const t=(h-35)/25;
-      r=0.45+t*0.12; g=0.43+t*0.13; b=0.40+t*0.15;
-    } else {                    // snowy rim
-      const t=Math.min(1,(h-60)/20);
-      r=0.57+t*0.32; g=0.58+t*0.32; b=0.62+t*0.32;
+    if(h < 1.5){              // grass
+      r=0.30; g=0.55; b=0.25;
+    } else if(h < 10){        // grass -> dirt
+      const t=(h-1.5)/8.5;
+      r=0.30+t*0.22; g=0.55-t*0.20; b=0.25-t*0.08;
+    } else if(h < 30){        // dirt -> rock
+      const t=(h-10)/20;
+      r=0.52-t*0.06; g=0.35-t*0.03; b=0.17+t*0.18;
+    } else {                  // rock -> light grey
+      const t=Math.min(1,(h-30)/45);
+      r=0.46+t*0.22; g=0.32+t*0.30; b=0.35+t*0.30;
     }
-    // Biome shift: arid (1) pulls toward warmer browns; lush (0) keeps it green.
-    r += biome * 0.10;
-    g -= biome * 0.06;
-    b -= biome * 0.04;
     return [r,g,b];
   };
+  // pnoise() actually returns roughly +-26 (sum of sine amplitudes), so
+  // every use needs to be scaled into a sane range.
+  const PN_SCALE = 1/26;
   for(let i=0;i<SLICES;i++){
     const t = i/(SLICES-1);
     const p = spline.getPointAt(t);
     const tg = spline.getTangentAt(t).normalize();
     bin.crossVectors(up,tg).normalize();
     const baseY=p.y, sx=p.x, sz=p.z;
-    // Per-slice valley width: pinch zones squeeze the trench down to ~35%.
     const w = widthMul(t);
-    // Slow biome wobble along the road
-    const biome = 0.5 + 0.45*Math.sin(i*0.018);
     for(let j=0;j<NC;j++){
       const d=DS[j];
       const x = sx + bin.x*d;
@@ -630,62 +627,20 @@ function buildTerrain(){
       const h = y - baseY;
       const ad = Math.abs(d);
       const localFR = FLOOR_R0 * w;
-      // Multi-scale noise gives the wall surface texture: small features
-      // (rocks, cracks), medium patches (moss/sand) and broad shading.
-      const n1 = pnoise(x*0.18, z*0.18);                  // fine detail
-      const n2 = pnoise(x*0.04 + 13.7, z*0.04 - 21.3);    // patches
-      const n3 = pnoise(x*0.012 + 71, z*0.012 + 9);       // broad zones
-      // Base natural colour
-      const c = naturalColor(h, biome);
+      // A single small-amplitude noise term gives gentle natural shading.
+      const n = pnoise(x*0.06, z*0.06) * PN_SCALE;        // ~ -1..+1
+      const c = naturalColor(h);
       let r=c[0], g=c[1], b=c[2];
-      // Fine speckle: brightens highlights and darkens cracks
-      const speck = 0.85 + n1*0.30;
-      r*=speck; g*=speck; b*=speck;
-      // Patch tinting on walls only — moss/lichen on rock, sandy seams
-      // on dirt, dark veins through stone. Floor stays clean grass.
-      if(ad > localFR){
-        const wallStrength = Math.min(1, (ad-localFR)/40);
-        // moss / lichen patches: slight green-cyan tint where n2 high
-        if(n2 > 0.15 && h > 12 && h < 50){
-          const t = Math.min(1, (n2-0.15)*2.5) * wallStrength * 0.55;
-          r = r*(1-t) + 0.30*t;
-          g = g*(1-t) + 0.55*t;
-          b = b*(1-t) + 0.32*t;
-        }
-        // dark mineral veins: where n2 is low, tint toward charcoal
-        if(n2 < -0.15){
-          const t = Math.min(1, (-n2-0.15)*2.5) * wallStrength * 0.45;
-          r = r*(1-t) + 0.18*t;
-          g = g*(1-t) + 0.16*t;
-          b = b*(1-t) + 0.20*t;
-        }
-        // sandy / clay seams in the lower wall band
-        if(n3 > 0.20 && h < 25){
-          const t = Math.min(1, (n3-0.20)*2.5) * wallStrength * 0.5;
-          r = r*(1-t) + 0.62*t;
-          g = g*(1-t) + 0.50*t;
-          b = b*(1-t) + 0.30*t;
-        }
-        // snow drift extension into rock band where n3 is very high
-        if(n3 > 0.30 && h > 38){
-          const t = Math.min(1, (n3-0.30)*3.0) * wallStrength * 0.55;
-          r = r*(1-t) + 0.92*t;
-          g = g*(1-t) + 0.95*t;
-          b = b*(1-t) + 0.99*t;
-        }
-      } else {
-        // Floor: subtle grass/dirt mottling
-        const t = (n2 + n1*0.4)*0.18;
-        r += t*0.10; g += t*0.04; b -= t*0.02;
-      }
-      // Brightness: floor full, walls dim slightly so neon pops.
-      const dim = ad < localFR ? 1.00
-                 : Math.max(0.55, 1.00 - (ad-localFR)*0.008);
-      const ao = 0.85 + n1*0.10 + n2*0.05;
-      const k2 = dim * ao;
-      colors[k]=Math.max(0,Math.min(1,r*k2));
-      colors[k+1]=Math.max(0,Math.min(1,g*k2));
-      colors[k+2]=Math.max(0,Math.min(1,b*k2));
+      // Subtle shading: +-12% brightness wobble so walls don't look flat.
+      const shade = 1.0 + n*0.12;
+      r *= shade; g *= shade; b *= shade;
+      // Distance dim — only past the floor edge, gentle.
+      const dim = ad < localFR ? 1.0
+                 : Math.max(0.75, 1.0 - (ad-localFR)*0.004);
+      r *= dim; g *= dim; b *= dim;
+      colors[k  ]=Math.max(0,Math.min(1,r));
+      colors[k+1]=Math.max(0,Math.min(1,g));
+      colors[k+2]=Math.max(0,Math.min(1,b));
     }
   }
   // Solid triangulation between adjacent slices/samples. Vertex colours
@@ -1203,44 +1158,36 @@ function populateObstacles(spline){
     }
   }
   // jagged rock outcrops jutting from the wall slope.
-  const rockStep = 10/densityMul;
+  const rockStep = 26/densityMul;          // calmer, less cluttered walls
   for(let d=80; d<len-80; d+=rockStep + Math.random()*14){
     const t=d/len;
     const p=spline.getPointAt(t);
     const tang=spline.getTangentAt(t).normalize();
     const bx=-tang.z, bz=tang.x;
     const wMul=widthMul(t);
-    // ~55% chance of both sides
-    const sides = Math.random()<0.55 ? [-1,+1] : [Math.random()<0.5?-1:1];
+    // single side mostly; both sides occasionally for variety
+    const sides = Math.random()<0.20 ? [-1,+1] : [Math.random()<0.5?-1:1];
     for(const s of sides){
-      const off = (38 + Math.random()*44) * wMul;   // 38..82 — full slope band
+      const off = (38 + Math.random()*44) * wMul;
       const wx=p.x+bx*s*off, wz=p.z+bz*s*off;
-      const wy=groundY(wx,wz) + 1.5;
-      placeRock(wx, wy, wz, 2.0 + Math.random()*3.0);
+      const wy=groundY(wx,wz) + 1.0;
+      placeRock(wx, wy, wz, 2.0 + Math.random()*2.5);
     }
   }
-  // CLIFF outcrops: bigger, taller rock formations every ~140 m. Same
-  // placeRock primitive but at much larger scale so they read as cliffs
-  // sticking out from the wall face.
-  const cliffStep = 140/densityMul;
-  for(let d=200; d<len-80; d+=cliffStep + Math.random()*100){
+  // Sparse cliff outcrops — bigger formations every ~280 m on average.
+  const cliffStep = 280/densityMul;
+  for(let d=240; d<len-80; d+=cliffStep + Math.random()*120){
     const t=d/len;
     const p=spline.getPointAt(t);
     const tang=spline.getTangentAt(t).normalize();
     const bx=-tang.z, bz=tang.x;
     const wMul=widthMul(t);
     const s = Math.random()<0.5 ? -1 : 1;
-    const off = (50 + Math.random()*30) * wMul;     // mid wall slope
+    const off = (50 + Math.random()*30) * wMul;
     const wx = p.x + bx*s*off;
     const wz = p.z + bz*s*off;
-    const wy = groundY(wx,wz) + 3.0;                // sits proud of the slope
-    placeRock(wx, wy, wz, 6.0 + Math.random()*5.0); // 6..11 m — cliff sized
-    // Cluster of smaller rocks at the base of the cliff
-    for(let k=0;k<3;k++){
-      const ox = wx + (Math.random()-0.5)*8;
-      const oz = wz + (Math.random()-0.5)*8;
-      placeRock(ox, groundY(ox,oz)+1.0, oz, 1.8 + Math.random()*1.8);
-    }
+    const wy = groundY(wx,wz) + 2.0;
+    placeRock(wx, wy, wz, 5.0 + Math.random()*4.0);
   }
   // arches
   const archStep = 380/densityMul;
@@ -1570,6 +1517,37 @@ function spawnMissile(fromPos, targetPos){
   trail.position.copy(fromPos);
   scene.add(trail);
   MISSILES.push({mesh:m, trail:trail, vel:vel, life:3.5, maxLife:3.5});
+}
+// Tank shell: a fast small tracer round, no glowing trail. Reuses the
+// MISSILES system + collision so the player can still shoot them down.
+function spawnShell(fromPos, targetPos){
+  const dir=new THREE.Vector3().subVectors(targetPos, fromPos);
+  const lead=H.vel.clone().multiplyScalar(0.4); // less lead — fast travel
+  dir.add(lead).normalize();
+  const vel=dir.multiplyScalar(160);
+  const geo=new THREE.CylinderGeometry(0.18,0.18,0.9,6);
+  geo.rotateX(Math.PI/2);
+  const mat=new THREE.MeshBasicMaterial({color:0xffdd55});
+  const m=new THREE.Mesh(geo, mat);
+  m.position.copy(fromPos);
+  scene.add(m);
+  if(!EXPL_TEX){ EXPL_TEX=makeFireballTexture(); SMOKE_TEX=makeSmokeTexture(); }
+  const tmat=new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, color:0xffeeaa});
+  const trail=new THREE.Sprite(tmat);
+  trail.scale.set(0.6,0.6,0.6);
+  trail.position.copy(fromPos);
+  scene.add(trail);
+  MISSILES.push({mesh:m, trail:trail, vel:vel, life:1.6, maxLife:1.6});
+  // sharp crack
+  if(AC && masterGain){
+    const t=AC.currentTime;
+    const o=AC.createOscillator(); const g=AC.createGain();
+    o.type='square'; o.frequency.setValueAtTime(180, t);
+    o.frequency.exponentialRampToValueAtTime(60, t+0.10);
+    g.gain.setValueAtTime(0.20, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t+0.12);
+    o.connect(g); g.connect(masterGain); o.start(); o.stop(t+0.13);
+  }
 }
 function tickMissiles(dt){
   for(let i=MISSILES.length-1;i>=0;i--){
@@ -2154,17 +2132,19 @@ function buildWorld(){
 // from its palette, so a row of pylons is cyan/teal/aqua/turquoise
 // rather than five identical cyan copies. Each kind keeps a consistent
 // mood (pylons cool, turrets red, etc.) while the scene gets variety.
+// Conventional, more realistic palette. Per-kind variety stays small
+// so the scene reads as a coherent military / civilian zone instead of
+// a neon arcade.
 const KIND_PALETTE = {
-  pylon:   [0x44e0ff, 0x00ffff, 0x66ffdd, 0x33ccff, 0xaaffff, 0x00ccaa],
-  arch:    [0xffdd22, 0xffaa33, 0xff7722, 0xffee88, 0xffcc00, 0xffbb55],
-  bldg:    [0xff55aa, 0xff33cc, 0xcc66ff, 0xff77dd, 0x9944ff, 0xff3388],
-  turret:  [0xff3a3a, 0xff0055, 0xff5500, 0xff2222, 0xff6633, 0xcc0033],
-  cable:   [0xcccccc, 0xaaaaaa, 0xddddee, 0xbbccbb],
-  balloon: [0xff9966, 0xff4488, 0x66ff99, 0xffcc33, 0x99aaff, 0xff66ff, 0xffaa44, 0x55ffdd],
-  // Rocks read as natural earth-tones so they stand out from neon obstacles.
-  rock:    [0x6b5641, 0x564636, 0x4a3a2a, 0x7a6856, 0x5a4838, 0x65503e],
-  truck:   [0x4488cc, 0xddcc55, 0xcc8855, 0x99aa44, 0xee9966, 0x66aaee],
-  tank:    [0x556644, 0x445533, 0x6c7044, 0x4f5a2c, 0x6a5530, 0x40503a],
+  pylon:   [0xb6b6c0, 0xa0a0a8, 0xc0b8b0],          // weathered metal grey
+  arch:    [0xc6a058, 0xb8924a, 0xa07d3d],          // ochre / industrial yellow
+  bldg:    [0xe8d5a8, 0xd4be90, 0xc8a878, 0xe0caa0],// sandy beige walls
+  turret:  [0x6a7050, 0x5d6448, 0x747a55],          // olive military
+  cable:   [0x444444, 0x383838, 0x4f4f4f],          // dark grey
+  balloon: [0xee4422, 0xeebb22, 0x2266ee, 0x44bb22],// bright primaries
+  rock:    [0x6a5a44, 0x5a4c3a, 0x6f6150],          // earth tones, three only
+  truck:   [0x3a6e9c, 0xb89638, 0x9a4a2c, 0x4a6e3a],// muted civilian
+  tank:    [0x4f5a3a, 0x586247, 0x44502c],          // olive drab
 };
 const ROAD_COLOR = 0xffffff;
 // Trench walls cycle through a palette as you fly along the road so the
@@ -2536,9 +2516,9 @@ function step(dt){
       if(d2 > 600*600) continue;
       o.cooldown -= dt;
       if(o.cooldown<=0 && d2 < 500*500){
-        spawnMissile(o.barrelBase, H.pos);
-        // tanks fire a bit slower than wall turrets
-        o.cooldown = (1.6+Math.random()*1.4) * diffCD;
+        spawnShell(o.barrelBase, H.pos);
+        // tanks fire fast bursts of 2-3 shells
+        o.cooldown = (0.7 + Math.random()*0.6) * diffCD;
       }
     }
   }
