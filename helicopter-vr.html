@@ -591,25 +591,19 @@ function buildTerrain(){
   // so the valley doesn't look perfectly uniform along its length.
   // Conventional natural palette: grass at the floor, dirt on the lower
   // wall, rock further up, light grey at the rim. Clean and uniform.
+  // Discrete geological strata — no smooth blending between bands. Reads
+  // as solid layered rock instead of a colour wash. Each band has a
+  // single base colour, with only small per-vertex variation on top.
   const naturalColor = (h)=>{
-    let r,g,b;
-    if(h < 1.5){              // grass
-      r=0.30; g=0.55; b=0.25;
-    } else if(h < 10){        // grass -> dirt
-      const t=(h-1.5)/8.5;
-      r=0.30+t*0.22; g=0.55-t*0.20; b=0.25-t*0.08;
-    } else if(h < 30){        // dirt -> rock
-      const t=(h-10)/20;
-      r=0.52-t*0.06; g=0.35-t*0.03; b=0.17+t*0.18;
-    } else {                  // rock -> light grey
-      const t=Math.min(1,(h-30)/45);
-      r=0.46+t*0.22; g=0.32+t*0.30; b=0.35+t*0.30;
-    }
-    return [r,g,b];
+    if(h < 2)        return [0.32, 0.55, 0.26];   // grass
+    if(h < 8)        return [0.42, 0.42, 0.22];   // turf / scrub
+    if(h < 18)       return [0.55, 0.40, 0.22];   // earth / dirt
+    if(h < 30)       return [0.48, 0.38, 0.30];   // packed clay
+    if(h < 45)       return [0.50, 0.46, 0.42];   // stone
+    if(h < 62)       return [0.62, 0.58, 0.54];   // weathered rock
+    return [0.74, 0.71, 0.66];                    // light limestone
   };
-  // pnoise() actually returns roughly +-26 (sum of sine amplitudes), so
-  // every use needs to be scaled into a sane range.
-  const PN_SCALE = 1/26;
+  const PN_SCALE = 1/26;   // pnoise returns roughly +-26
   for(let i=0;i<SLICES;i++){
     const t = i/(SLICES-1);
     const p = spline.getPointAt(t);
@@ -627,16 +621,16 @@ function buildTerrain(){
       const h = y - baseY;
       const ad = Math.abs(d);
       const localFR = FLOOR_R0 * w;
-      // A single small-amplitude noise term gives gentle natural shading.
-      const n = pnoise(x*0.06, z*0.06) * PN_SCALE;        // ~ -1..+1
       const c = naturalColor(h);
       let r=c[0], g=c[1], b=c[2];
-      // Subtle shading: +-12% brightness wobble so walls don't look flat.
-      const shade = 1.0 + n*0.12;
-      r *= shade; g *= shade; b *= shade;
-      // Distance dim — only past the floor edge, gentle.
+      // Very small per-vertex variation so each strata has surface texture
+      // without losing the solid banded look.
+      const n = pnoise(x*0.10, z*0.10) * PN_SCALE;
+      const variation = 1.0 + n*0.07;
+      r *= variation; g *= variation; b *= variation;
+      // Mild distance dim only.
       const dim = ad < localFR ? 1.0
-                 : Math.max(0.75, 1.0 - (ad-localFR)*0.004);
+                 : Math.max(0.78, 1.0 - (ad-localFR)*0.003);
       r *= dim; g *= dim; b *= dim;
       colors[k  ]=Math.max(0,Math.min(1,r));
       colors[k+1]=Math.max(0,Math.min(1,g));
