@@ -2242,6 +2242,7 @@ function buildWorld(){
   if(treesB){scene.remove(treesB); treesB.geometry.dispose(); treesB.material.dispose(); treesB=null;}
   if(grassTufts){scene.remove(grassTufts); grassTufts.geometry.dispose(); grassTufts.material.dispose(); grassTufts=null;}
   if(monolith){scene.remove(monolith); monolith.geometry.dispose(); monolith.material.dispose(); monolith=null;}
+  if(tronGrid){scene.remove(tronGrid); tronGrid.geometry.dispose(); tronGrid.material.dispose(); tronGrid=null;}
   if(roadObj){scene.remove(roadObj); roadObj.geometry.dispose(); roadObj.material.dispose(); roadObj=null;}
   if(heli){scene.remove(heli); heli=null;}
 
@@ -2260,9 +2261,55 @@ function buildWorld(){
   buildTrees();
   buildGrass();
   buildMonolith();
+  buildTronGrid(spline);
   populateObstacles(spline);
   buildHeli();
   applyArcadeLook();
+}
+
+// Cyan grid running along the trench floor — Tron's signature look.
+// Long lines along the road tangent + cross lines every ~20 m.
+let tronGrid;
+function buildTronGrid(spline){
+  if(tronGrid){ scene.remove(tronGrid); tronGrid.geometry.dispose(); tronGrid.material.dispose(); }
+  const SEG = 1800;                // along-road samples
+  const HALFW = 24;                // grid extends +-24 m laterally
+  const LANES = 7;                 // longitudinal lines
+  const positions = [];
+  const up = new THREE.Vector3(0,1,0);
+  const bin = new THREE.Vector3();
+  const prevPts = new Array(LANES);
+  for(let i=0;i<=SEG;i++){
+    const t = i/SEG;
+    const sp = spline.getPointAt(t);
+    const tg = spline.getTangentAt(t).normalize();
+    bin.crossVectors(up, tg).normalize();
+    const wMul = widthMul(t);
+    const yFloor = sp.y - 0.95;    // sit just above the floor
+    for(let j=0;j<LANES;j++){
+      const lat = ((j/(LANES-1)) - 0.5) * 2 * HALFW * wMul;
+      const x = sp.x + bin.x*lat;
+      const z = sp.z + bin.z*lat;
+      const cur = new THREE.Vector3(x, yFloor, z);
+      // longitudinal lane: connect to previous slice
+      if(prevPts[j]){
+        positions.push(prevPts[j].x, prevPts[j].y, prevPts[j].z, cur.x, cur.y, cur.z);
+      }
+      prevPts[j] = cur;
+    }
+    // cross-bars every ~20 m of along-road distance (each ~30 m segment)
+    if(i % 4 === 0){
+      const left = new THREE.Vector3(sp.x + bin.x*(-HALFW*wMul), yFloor, sp.z + bin.z*(-HALFW*wMul));
+      const right= new THREE.Vector3(sp.x + bin.x*( HALFW*wMul), yFloor, sp.z + bin.z*( HALFW*wMul));
+      positions.push(left.x, left.y, left.z, right.x, right.y, right.z);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const mat = new THREE.LineBasicMaterial({color:0x00ddff, transparent:true, opacity:0.85});
+  tronGrid = new THREE.LineSegments(geo, mat);
+  tronGrid.userData.retroDone = true;   // skip arcade material conversion
+  scene.add(tronGrid);
 }
 
 // ─── ARCADE / VECTOR LOOK ──────────────────────────────────
@@ -2401,20 +2448,32 @@ function applyArcadeLook(){
       col.multiplyScalar(wx.brightness);
       nm = new THREE.MeshBasicMaterial({color:col});
     } else {
-      // Solid shaded material so faces light/shadow give 3D form. Each
-      // kind also gets an emissive tint at ~30% so dark obstacles don't
-      // disappear into the night yet still read as solid silhouettes.
+      // Tron silhouette: very dark body, a thin emissive in the kind's
+      // colour. Looks black-ish at distance but glows on facing edges.
       let baseHex;
       if(obj===roadObj)        baseHex = ROAD_COLOR;
       else if(rootHex!=null)   baseHex = rootHex;
       else if(m.color)         baseHex = m.color.getHex();
       else                     baseHex = 0x223344;
-      const col = new THREE.Color(baseHex).multiplyScalar(wx.brightness);
-      const emCol = col.clone().multiplyScalar(0.32);
+      const accent = new THREE.Color(baseHex);
+      const body = accent.clone().multiplyScalar(0.10);   // near-black body
+      const em   = accent.clone().multiplyScalar(0.25);   // faint emissive tint
       nm = new THREE.MeshStandardMaterial({
-        color: col, emissive: emCol, emissiveIntensity: 1.0,
-        flatShading: true, roughness: 0.85, metalness: 0.05,
+        color: body, emissive: em, emissiveIntensity: 1.0,
+        flatShading: true, roughness: 0.95, metalness: 0.05,
       });
+      // GLOWING EDGE OUTLINE — Tron's signature look. Add an
+      // EdgesGeometry overlay child as bright LineSegments. Skip if the
+      // mesh has no geometry or is already an outline (avoid recursion).
+      if(obj.geometry && !obj.userData.tronOutlined && obj.geometry.attributes && obj.geometry.attributes.position){
+        const eg = new THREE.EdgesGeometry(obj.geometry, 18);
+        const lineMat = new THREE.LineBasicMaterial({color: accent.clone().multiplyScalar(wx.brightness*1.2)});
+        const lines = new THREE.LineSegments(eg, lineMat);
+        lines.userData.retroDone = true;
+        lines.userData.isTronOutline = true;
+        obj.add(lines);
+        obj.userData.tronOutlined = true;
+      }
     }
     obj.userData.retroDone = true;
     obj.material = nm;
@@ -3068,7 +3127,6 @@ function drawStickHint(cx,cy,label){
 function startGame(){
   if(!WEBGL_OK){ return; }
   unlockAudio();
-  startMusic();
   STATE.started=true; STATE.over=false;
   document.getElementById('overlay').style.display='none';
   document.getElementById('hud').style.display='block';
@@ -3127,7 +3185,6 @@ function restartGame(){
   DIST=0; MULT=1.0;
   buildWorld();
   resetHeli();
-  startMusic();
 }
 function goMenu(){
   STATE.started=false; STATE.over=false;
@@ -3140,7 +3197,6 @@ function goMenu(){
   releaseStick();
   // Silence the rotor — otherwise the hum keeps playing in the menu.
   if(rotorGain && AC){ rotorGain.gain.setTargetAtTime(0, AC.currentTime, 0.05); }
-  stopMusic();
   document.getElementById('overlay').style.display='flex';
   hudCtx.clearRect(0,0,window.innerWidth,window.innerHeight);
 }
@@ -3182,7 +3238,6 @@ function gameOver(cause){
   // Let the explosion play before the panel pops up.
   setTimeout(()=>{ if(STATE.over) document.getElementById('gameover').style.display='flex'; }, 1500);
   if(rotorGain && AC){ rotorGain.gain.setTargetAtTime(0, AC.currentTime, 0.2); }
-  stopMusic();
 }
 
 // ─── RENDER LOOP ───────────────────────────────────────────
