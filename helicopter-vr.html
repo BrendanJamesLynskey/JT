@@ -2437,16 +2437,23 @@ function applyArcadeLook(){
     for(let cur=obj; cur; cur=cur.parent){
       const k = kindByRoot.get(cur); if(k){ kind=k; rootHex=colorByRoot.get(cur); break; }
     }
-    const emissive = m.emissive && ((m.emissiveIntensity||0) > 0.5);
+    // "Bright" means: an actual non-zero emissive colour (pickups,
+    // prize), OR an explicit MeshBasicMaterial chosen for solid colour
+    // (missiles, bullets, shells). Default-emissive StandardMaterials
+    // (buildings, pylons, etc.) DON'T qualify and get wireframed.
+    const isBright = m.isMeshBasicMaterial ||
+                     (m.emissive && m.emissive.getHex() !== 0 && (m.emissiveIntensity||0) > 0.5);
     let nm;
-    if(emissive){
-      // pickups, missiles, prizes, bullets stay solid bright so they pop
-      // against the wireframe void.
-      const col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15);
-      col.multiplyScalar(wx.brightness);
+    if(isBright){
+      let col;
+      if(m.isMeshBasicMaterial){
+        col = m.color.clone().multiplyScalar(wx.brightness);
+      } else {
+        col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15).multiplyScalar(wx.brightness);
+      }
       nm = new THREE.MeshBasicMaterial({color:col});
     } else {
-      // PURE WIREFRAME: every solid mesh becomes white wireframe.
+      // PURE WIREFRAME: every other solid mesh becomes white wireframe.
       nm = new THREE.MeshBasicMaterial({color:0xffffff, wireframe:true});
     }
     obj.userData.retroDone = true;
