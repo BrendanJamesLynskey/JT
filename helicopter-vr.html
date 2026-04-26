@@ -957,12 +957,13 @@ function placePrize(worldX, worldY, worldZ){
   const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, color:0x99ff44}));
   halo.scale.set(8,8,8);
   g.add(halo);
-  // pedestal beam — green so it's clearly the radioactive marker
+  // tall pedestal beam from the floor up to the gem so the heli can
+  // collect at safe cruise altitude without scraping the ground.
   const beam=new THREE.Mesh(
-    new THREE.CylinderGeometry(0.25,0.25,12,8),
-    new THREE.MeshBasicMaterial({color:0x88ff22, transparent:true, opacity:0.6})
+    new THREE.CylinderGeometry(0.4,0.4,30,8),
+    new THREE.MeshBasicMaterial({color:0x88ff22, transparent:true, opacity:0.65})
   );
-  beam.position.y=-6;
+  beam.position.y=-15; // base sits ~15 m below gem (which is at floor+18)
   g.add(beam);
   g.position.set(worldX, worldY, worldZ);
   scene.add(g);
@@ -1159,7 +1160,7 @@ function populateObstacles(spline){
     const lat=(Math.random()-0.5)*8;       // tiny wobble around centre
     const x=p.x + nx*lat;
     const z=p.z + nz*lat;
-    const y=groundY(x,z) + 3.0;            // hovering just above the floor
+    const y=groundY(x,z) + 18.0;           // gem hovers at safe cruise altitude
     placePrize(x,y,z);
   }
 }
@@ -1485,9 +1486,13 @@ function tickEnemies(dt){
   // Spawn schedule — more often as the level rises.
   nextEnemyT -= dt;
   if(nextEnemyT<=0 && H.alive && !STATE.over){
-    if(ENEMIES.length < 5 + STATE.level) spawnEnemy();
-    const interval = Math.max(2.5, 7 - STATE.level*0.4);
-    nextEnemyT = interval + Math.random()*2.5;
+    // Spawn one bandit, and 35% of the time spawn a wing-man too.
+    if(ENEMIES.length < 8 + STATE.level*2){
+      spawnEnemy();
+      if(Math.random()<0.35 && ENEMIES.length < 8 + STATE.level*2) spawnEnemy();
+    }
+    const interval = Math.max(1.5, 4 - STATE.level*0.3);
+    nextEnemyT = interval + Math.random()*1.5;
   }
   for(let i=ENEMIES.length-1;i>=0;i--){
     const e = ENEMIES[i];
@@ -1519,13 +1524,42 @@ function tickEnemies(dt){
   }
 }
 
+// ─── GROUND PROXIMITY ALARM ────────────────────────────────
+// Plays a short pulse the closer the heli gets to the ground; pulse
+// rate accelerates from ~1 Hz at 18 m AGL to ~6 Hz right above contact.
+let nextBeepT = 0;
+function tickAltAlarm(dt){
+  if(!H.alive || STATE.over){ return; }
+  nextBeepT -= dt;
+  if(nextBeepT > 0) return;
+  const gy = groundY(H.pos.x, H.pos.z);
+  const alt = H.pos.y - gy;
+  const TRIG = 18;
+  if(alt > TRIG){ nextBeepT = 0.3; return; }
+  // beep
+  if(AC && masterGain){
+    const t = AC.currentTime;
+    const o = AC.createOscillator(); const g = AC.createGain();
+    o.type='sine';
+    // pitch rises as you get lower
+    const f = 700 + (1 - Math.max(0,alt)/TRIG) * 700;
+    o.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(0.18, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t+0.07);
+    o.connect(g); g.connect(masterGain); o.start(); o.stop(t+0.09);
+  }
+  // interval shrinks with altitude — clamp 0.13..0.95 s
+  const frac = Math.max(0, alt/TRIG);
+  nextBeepT = 0.13 + frac*0.82;
+}
+
 // ─── BULLETS (helicopter nose gun) ─────────────────────────
 const BULLETS=[];
 let GUN_COOLDOWN = 0;     // seconds until next shot allowed
 let GUN_HEAT = 0;         // 0..1 — fills while firing, drops while idle
 let GUN_LOCKOUT = 0;      // seconds remaining of forced-cool lockout
 const GUN_RATE = 0.045;   // ~22 rps — proper machine-gun cadence
-const HEAT_BURN_TIME = 10; // seconds of continuous fire to overheat
+const HEAT_BURN_TIME = 4;  // seconds of continuous fire to overheat
 const HEAT_COOL_TIME = 3;  // seconds of forced cooldown when overheated
 let GUN_BARREL = 0;     // alternate between two muzzles
 function spawnBullet(){
@@ -2155,15 +2189,12 @@ function step(dt){
   // Integrate position
   H.pos.addScaledVector(H.vel, dt);
 
-  // Keep aircraft clear of terrain (soft arcade floor, not instant death)
+  // Keep aircraft clear of terrain. Touching the ground at all costs
+  // health now (gated by the invuln window so it can't drain instantly).
   const gy=groundY(H.pos.x,H.pos.z);
   const floorY = gy + 2.5;
   if(H.pos.y < floorY){
-    // strong impact → shield damage; mild scrape → push up
-    const vy = H.vel.y;
-    if(vy < -18 && H.invuln<=0){
-      damageShield('TERRAIN');
-    }
+    if(H.invuln<=0) damageLife('TERRAIN');
     H.pos.y = floorY;
     H.vel.y = Math.max(H.vel.y, 2);
     H.ang.x = Math.max(H.ang.x, 0.05); // nose up a touch
@@ -2782,7 +2813,7 @@ function loop(){
     tickStorm(dt);
   }
   // particles (explosion debris/smoke) keep animating even after crash
-  if(STATE.started){ tickParticles(dt); tickMissiles(dt); tickBullets(dt); tickEnemies(dt); }
+  if(STATE.started){ tickParticles(dt); tickMissiles(dt); tickBullets(dt); tickEnemies(dt); tickAltAlarm(dt); }
   // persistent shake during crash sequence
   if(STATE.started && STATE.over && H.shake>0){
     H.shake = Math.max(0, H.shake - dt*1.2);
