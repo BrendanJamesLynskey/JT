@@ -922,6 +922,36 @@ function placePrize(worldX, worldY, worldZ){
   return g;
 }
 
+// Jagged rock outcrop jutting from the wall — purely a hazard, no firing.
+function placeRock(worldX, worldY, worldZ, scale){
+  const g=new THREE.Group();
+  const rocks = 3 + Math.floor(Math.random()*4);
+  let topY=0, botY=0;
+  for(let i=0;i<rocks;i++){
+    const sz = scale * (0.65 + Math.random()*0.9);
+    const r = new THREE.Mesh(
+      new THREE.OctahedronGeometry(sz, 0),
+      new THREE.MeshBasicMaterial({color: 0x4a3a2a})
+    );
+    const lx = (Math.random()-0.5)*scale*1.6;
+    const ly = (Math.random()-0.5)*scale*0.7;
+    const lz = (Math.random()-0.5)*scale*1.6;
+    r.position.set(lx, ly, lz);
+    r.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+    g.add(r);
+    topY = Math.max(topY, ly + sz);
+    botY = Math.min(botY, ly - sz);
+  }
+  g.position.set(worldX, worldY, worldZ);
+  scene.add(g);
+  OBSTACLES.push({mesh:g, kind:'rock',
+    pos:new THREE.Vector3(worldX, worldY, worldZ),
+    r: scale*1.6,
+    hitTop: worldY + topY + 1,
+    hitBot: worldY + botY - 1});
+  return g;
+}
+
 function placeTurret(worldX, worldY, worldZ, tang, side){
   const g=new THREE.Group();
   const mat=new THREE.MeshStandardMaterial({color:0x333840, roughness:0.7, metalness:0.3});
@@ -1002,6 +1032,24 @@ function populateObstacles(spline){
       const wx=p.x+bx*s*off, wz=p.z+bz*s*off;
       const wy=groundY(wx,wz);
       placeTurret(wx, wy, wz, tang, s);
+    }
+  }
+  // jagged rock outcrops jutting from the wall slope — stay clear or
+  // you scrape them and lose health.
+  const rockStep = 70/densityMul;
+  for(let d=120; d<len-80; d+=rockStep + Math.random()*40){
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t).normalize();
+    const bx=-tang.z, bz=tang.x;
+    // either side (or both occasionally)
+    const sides = Math.random()<0.25 ? [-1,+1] : [Math.random()<0.5?-1:1];
+    for(const s of sides){
+      // position along the wall slope (between floor edge and rim)
+      const off = 42 + Math.random()*32;     // 42..74 — slope band
+      const wx=p.x+bx*s*off, wz=p.z+bz*s*off;
+      const wy=groundY(wx,wz) + 1.5;         // protrudes into the trench
+      placeRock(wx, wy, wz, 2.6 + Math.random()*2.4);
     }
   }
   // arches
@@ -1333,6 +1381,95 @@ function tickMissiles(dt){
   }
 }
 
+// ─── ENEMY BANDITS ────────────────────────────────────────
+// Small angular drone-jets that spawn ahead of the heli, accelerate
+// toward it, and try to ram it. Two bullet hits destroys one.
+const ENEMIES=[];
+let nextEnemyT = 6;
+function spawnEnemy(){
+  const g=new THREE.Group();
+  // pointed body
+  const body=new THREE.Mesh(
+    new THREE.ConeGeometry(1.0, 4.2, 6),
+    new THREE.MeshBasicMaterial({color:0x3a1018})
+  );
+  body.rotation.x = -Math.PI/2; // point along -Z (local forward)
+  g.add(body);
+  // swept wings
+  const wings=new THREE.Mesh(
+    new THREE.BoxGeometry(5.5, 0.3, 1.2),
+    new THREE.MeshBasicMaterial({color:0x550022})
+  );
+  wings.position.z = 0.4;
+  g.add(wings);
+  // glowing red eye / cockpit
+  const eye=new THREE.Mesh(
+    new THREE.SphereGeometry(0.55, 8, 6),
+    new THREE.MeshBasicMaterial({color:0xff2233})
+  );
+  eye.position.z = -1.6;
+  g.add(eye);
+  // tail fin
+  const tail=new THREE.Mesh(
+    new THREE.BoxGeometry(0.25, 1.2, 0.9),
+    new THREE.MeshBasicMaterial({color:0x550022})
+  );
+  tail.position.set(0, 0.6, 1.6);
+  g.add(tail);
+
+  // Spawn ahead of the player, slightly off to one side and at a random
+  // altitude within the trench corridor.
+  const fwd  = new THREE.Vector3(0,0,-1).applyQuaternion(H.quat);
+  const right= new THREE.Vector3(1,0,0).applyQuaternion(H.quat);
+  const spawnDist = 280 + Math.random()*180;
+  const sideOff   = (Math.random()-0.5) * 36;
+  const upOff     = (Math.random()-0.5) * 22;
+  const pos = H.pos.clone()
+    .addScaledVector(fwd,   spawnDist)
+    .addScaledVector(right, sideOff);
+  pos.y += upOff;
+  g.position.copy(pos);
+  scene.add(g);
+  ENEMIES.push({mesh:g, pos:g.position, vel:new THREE.Vector3(0,0,0), hp:2});
+}
+function tickEnemies(dt){
+  // Spawn schedule — more often as the level rises.
+  nextEnemyT -= dt;
+  if(nextEnemyT<=0 && H.alive && !STATE.over){
+    if(ENEMIES.length < 5 + STATE.level) spawnEnemy();
+    const interval = Math.max(2.5, 7 - STATE.level*0.4);
+    nextEnemyT = interval + Math.random()*2.5;
+  }
+  for(let i=ENEMIES.length-1;i>=0;i--){
+    const e = ENEMIES[i];
+    // Steer toward player with a smooth acceleration.
+    const dir = new THREE.Vector3().subVectors(H.pos, e.pos).normalize();
+    const speed = 32 + STATE.level*3;
+    const targetVel = dir.multiplyScalar(speed);
+    e.vel.lerp(targetVel, Math.min(1, dt*1.5));
+    e.pos.addScaledVector(e.vel, dt);
+    // Orient mesh along motion so the cone points where it's flying.
+    if(e.vel.lengthSq() > 0.01){
+      const look = e.pos.clone().add(e.vel);
+      e.mesh.lookAt(look);
+    }
+    // Ram the player?
+    const dx=H.pos.x-e.pos.x, dy=H.pos.y-e.pos.y, dz=H.pos.z-e.pos.z;
+    if(dx*dx+dy*dy+dz*dz < 4.0*4.0 && H.invuln<=0 && H.alive){
+      damageLife('ENEMY');
+      explosionBurst(e.pos.clone(), 0.9);
+      scene.remove(e.mesh);
+      ENEMIES.splice(i,1);
+      continue;
+    }
+    // Despawn if it falls way behind the player (shouldn't, but safety).
+    if(H.pos.distanceTo(e.pos) > 900){
+      scene.remove(e.mesh);
+      ENEMIES.splice(i,1);
+    }
+  }
+}
+
 // ─── BULLETS (helicopter nose gun) ─────────────────────────
 const BULLETS=[];
 let GUN_COOLDOWN = 0;   // seconds until next shot allowed
@@ -1410,6 +1547,27 @@ function tickBullets(dt){
           if(mi.mesh.material) mi.mesh.material.dispose();
           if(mi.trail.material) mi.trail.material.dispose();
           MISSILES.splice(j,1);
+          dead=true;
+          break;
+        }
+      }
+    }
+    // vs enemy bandits
+    if(!dead){
+      for(let j=ENEMIES.length-1;j>=0;j--){
+        const e=ENEMIES[j];
+        const dx=b.mesh.position.x-e.pos.x;
+        const dy=b.mesh.position.y-e.pos.y;
+        const dz=b.mesh.position.z-e.pos.z;
+        if(dx*dx+dy*dy+dz*dz < 3.5*3.5){
+          e.hp -= 1;
+          if(e.hp<=0){
+            explosionBurst(e.pos.clone(), 0.9);
+            scene.remove(e.mesh);
+            ENEMIES.splice(j,1);
+          } else {
+            explosionBurst(b.mesh.position.clone(), 0.25);
+          }
           dead=true;
           break;
         }
@@ -1626,7 +1784,11 @@ function buildWorld(){
     if(b.mesh.geometry) b.mesh.geometry.dispose();
     if(b.mesh.material) b.mesh.material.dispose();
   }
+  while(ENEMIES.length){
+    const e=ENEMIES.pop(); scene.remove(e.mesh);
+  }
   GUN_COOLDOWN = 0;
+  nextEnemyT = 6;     // first bandit ~6 s into the level
   if(terrain){scene.remove(terrain); terrain.geometry.dispose(); terrain.material.dispose(); terrain=null;}
   if(treesA){scene.remove(treesA); treesA.geometry.dispose(); treesA.material.dispose(); treesA=null;}
   if(treesB){scene.remove(treesB); treesB.geometry.dispose(); treesB.material.dispose(); treesB=null;}
@@ -1663,6 +1825,8 @@ const KIND_PALETTE = {
   turret:  [0xff3a3a, 0xff0055, 0xff5500, 0xff2222, 0xff6633, 0xcc0033],
   cable:   [0xcccccc, 0xaaaaaa, 0xddddee, 0xbbccbb],
   balloon: [0xff9966, 0xff4488, 0x66ff99, 0xffcc33, 0x99aaff, 0xff66ff, 0xffaa44, 0x55ffdd],
+  // Rocks read as natural earth-tones so they stand out from neon obstacles.
+  rock:    [0x6b5641, 0x564636, 0x4a3a2a, 0x7a6856, 0x5a4838, 0x65503e],
 };
 const ROAD_COLOR = 0xffffff;
 // Trench walls cycle through a palette as you fly along the road so the
@@ -1780,7 +1944,7 @@ function checkCollisions(){
     const dx=px-o.pos.x, dz=pz-o.pos.z;
     const dh=Math.sqrt(dx*dx+dz*dz);
     if(dh > 120) continue;
-    if(o.kind==='pylon'||o.kind==='arch'||o.kind==='bldg'||o.kind==='turret'){
+    if(o.kind==='pylon'||o.kind==='arch'||o.kind==='bldg'||o.kind==='turret'||o.kind==='rock'){
       if(dh < o.r+1.5 && py > o.hitBot && py < o.hitTop){
         return o.kind;
       }
@@ -2039,7 +2203,7 @@ function step(dt){
 
 // Shield damage on a non-fatal hit. When shield runs out, it's game over.
 // Damage amounts per hit source (fraction of full life).
-const DMG = { TERRAIN:0.15, MISSILE:0.20, PYLON:0.28, ARCH:0.28, BLDG:0.28, TURRET:0.22, CABLE:0.22, BALLOON:0.15 };
+const DMG = { TERRAIN:0.15, MISSILE:0.20, PYLON:0.28, ARCH:0.28, BLDG:0.28, TURRET:0.22, CABLE:0.22, BALLOON:0.15, ROCK:0.20, ENEMY:0.22 };
 function damageLife(cause){
   if(H.invuln>0 || !H.alive) return;
   const amt = DMG[cause] != null ? DMG[cause] : 0.22;
@@ -2467,6 +2631,8 @@ const QUIPS={
   BALLOON:'Somebody is very sad right now.',
   CABLE:'Invisible cables strike again.',
   MISSILE:'A turret remembered your name.',
+  ROCK:'That outcrop wasn\'t bluffing.',
+  ENEMY:'A bandit got the better of you.',
   TURRET:'The turret won the stand-off.',
 };
 function gameOver(cause){
@@ -2504,7 +2670,7 @@ function loop(){
     tickStorm(dt);
   }
   // particles (explosion debris/smoke) keep animating even after crash
-  if(STATE.started){ tickParticles(dt); tickMissiles(dt); tickBullets(dt); }
+  if(STATE.started){ tickParticles(dt); tickMissiles(dt); tickBullets(dt); tickEnemies(dt); }
   // persistent shake during crash sequence
   if(STATE.started && STATE.over && H.shake>0){
     H.shake = Math.max(0, H.shake - dt*1.2);
