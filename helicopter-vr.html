@@ -591,13 +591,13 @@ function buildTerrain(){
   // so the valley doesn't look perfectly uniform along its length.
   // Conventional natural palette: grass at the floor, dirt on the lower
   // wall, rock further up, light grey at the rim. Clean and uniform.
-  // Wireframe colour: bright white at the rim, soft cyan-white lower
-  // down so the floor reads slightly different from the cliff face.
+  // Tron palette: very dark walls, cyan-tinted floor. Lighting picks
+  // out the geometry by shading the faces.
   const naturalColor = (h)=>{
-    if(h < 4)        return [0.55, 1.00, 0.85];   // soft cyan-green floor lines
-    if(h < 25)       return [0.75, 0.95, 1.00];   // pale blue-white wall
-    if(h < 55)       return [0.92, 0.97, 1.00];   // crisp white rock
-    return [1.00, 1.00, 1.00];                    // bright white rim
+    if(h < 2)        return [0.10, 0.45, 0.60];   // dim cyan floor
+    if(h < 12)       return [0.06, 0.10, 0.16];   // dark blue-black base
+    if(h < 35)       return [0.05, 0.08, 0.12];   // near-black mid wall
+    return [0.04, 0.06, 0.10];                    // black rim
   };
   const PN_SCALE = 1/26;   // pnoise returns roughly +-26
   for(let i=0;i<SLICES;i++){
@@ -637,29 +637,48 @@ function buildTerrain(){
   // carry the natural grass/dirt/rock/snow palette; MeshBasicMaterial
   // gives flat unshaded fills — exactly the cartoon look we want.
   const indices=[];
-  // WIREFRAME terrain: rungs (cross-section) + rails (along-road).
-  // No triangle diagonals — clean Tron / Battlezone grid.
-  for(let i=0;i<SLICES;i++){
-    for(let j=0;j<NC-1;j++){
-      indices.push(i*NC+j, i*NC+(j+1));
-    }
-  }
+  // SOLID triangulated terrain — faces flat-shaded by lighting so the
+  // valley reads as 3D rather than a flat colour wash.
   for(let i=0;i<SLICES-1;i++){
-    for(let j=0;j<NC;j++){
-      indices.push(i*NC+j, (i+1)*NC+j);
+    for(let j=0;j<NC-1;j++){
+      const a=i*NC+j, b=i*NC+(j+1), c=(i+1)*NC+j, d=(i+1)*NC+(j+1);
+      indices.push(a,c,b, b,c,d);
     }
   }
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
   geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
   geo.setIndex(indices);
-  const mat=new THREE.LineBasicMaterial({vertexColors:true});
-  return new THREE.LineSegments(geo, mat);
+  geo.computeVertexNormals();
+  const mat=new THREE.MeshStandardMaterial({vertexColors:true, flatShading:true, roughness:1.0, metalness:0.0});
+  return new THREE.Mesh(geo, mat);
 }
 
 // ─── TREES (InstancedMesh) ────────────────────────────────
 let treesA, treesB;
 let grassTufts; // InstancedMesh — purely decorative, no collision
+let monolith;   // dark Thumper-style silhouette on the horizon
+function buildMonolith(){
+  // Big low-poly shape sitting far behind the trench, slowly rotating
+  // for atmospheric depth. Pure black with a faint cyan emissive so it
+  // reads as a silhouette against the night sky.
+  const geo = new THREE.IcosahedronGeometry(180, 1);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x000000, emissive: 0x002238, emissiveIntensity: 1.2,
+    flatShading: true, roughness: 1.0
+  });
+  monolith = new THREE.Mesh(geo, mat);
+  monolith.userData.retroDone = true; // skip arcade material conversion
+  // Place it near the start of the spline, far ahead and high up.
+  if(spline){
+    const sp = spline.getPointAt(0);
+    const tg = spline.getTangentAt(0).normalize();
+    monolith.position.set(sp.x + tg.x*900, sp.y + 220, sp.z + tg.z*900);
+  } else {
+    monolith.position.set(0, 220, -900);
+  }
+  scene.add(monolith);
+}
 function buildGrass(){
   // Tiny green cones scattered across the trench floor and lower slopes
   // for a "ground cover" feel. Uses InstancedMesh for performance.
@@ -2100,6 +2119,7 @@ function buildWorld(){
   if(treesA){scene.remove(treesA); treesA.geometry.dispose(); treesA.material.dispose(); treesA=null;}
   if(treesB){scene.remove(treesB); treesB.geometry.dispose(); treesB.material.dispose(); treesB=null;}
   if(grassTufts){scene.remove(grassTufts); grassTufts.geometry.dispose(); grassTufts.material.dispose(); grassTufts=null;}
+  if(monolith){scene.remove(monolith); monolith.geometry.dispose(); monolith.material.dispose(); monolith=null;}
   if(roadObj){scene.remove(roadObj); roadObj.geometry.dispose(); roadObj.material.dispose(); roadObj=null;}
   if(heli){scene.remove(heli); heli=null;}
 
@@ -2115,9 +2135,9 @@ function buildWorld(){
 
   terrain = buildTerrain(); scene.add(terrain);
   roadObj = buildRoad(spline); scene.add(roadObj);
-  // wireframe mode: skip decorative ground cover that would break the look
-  // buildTrees();
-  // buildGrass();
+  buildTrees();
+  buildGrass();
+  buildMonolith();
   populateObstacles(spline);
   buildHeli();
   applyArcadeLook();
@@ -2128,18 +2148,19 @@ function buildWorld(){
 // from its palette, so a row of pylons is cyan/teal/aqua/turquoise
 // rather than five identical cyan copies. Each kind keeps a consistent
 // mood (pylons cool, turrets red, etc.) while the scene gets variety.
-// WIREFRAME mode: white for neutral structures, RED for hostile things,
-// dim grey for cables. Pickups + missiles stay bright via emissive path.
+// TRON palette: strict 3-colour rule. Black + cyan + orange.
+// Cyan = friendly/neutral structures. Orange = hostile (turret, tank).
+// Green is reserved exclusively for uranium pickups (see emissive path).
 const KIND_PALETTE = {
-  pylon:   [0xffffff, 0xeeeeff, 0xddddee],
-  arch:    [0xffffff, 0xeeffff],
-  bldg:    [0xffffff, 0xeeeeff, 0xddeeff],
-  turret:  [0xff3333, 0xff5555, 0xff2222],   // RED — danger
-  cable:   [0x888888, 0x666666],
-  balloon: [0xffffff, 0xeeffff],
-  rock:    [0xffffff, 0xdddddd, 0xeeeeee],
-  truck:   [0xffffff, 0xeeeeee],
-  tank:    [0xff3333, 0xff4444, 0xcc2222],   // RED — danger
+  pylon:   [0x00ccff, 0x00b8e8, 0x33ddff],     // cyan
+  arch:    [0x00ccff, 0x33ddff],                // cyan
+  bldg:    [0x0088aa, 0x006688, 0x0099bb],      // dim cyan
+  turret:  [0xff7722, 0xff8833, 0xff6611],      // orange — danger
+  cable:   [0x336688, 0x224466],                // dim
+  balloon: [0x00ccff, 0xff7722],                // cyan or orange
+  rock:    [0x111122, 0x080814, 0x161628],      // very dark
+  truck:   [0x00ccff, 0x0099bb],                // cyan
+  tank:    [0xff7722, 0xff5511, 0xcc4400],      // orange — danger
 };
 const ROAD_COLOR = 0xffffff;
 // Trench walls cycle through a palette as you fly along the road so the
@@ -2177,16 +2198,21 @@ const ARCADE_WX = {
 function applyArcadeLook(){
   const tod = ARCADE_TOD[STATE.tod] || ARCADE_TOD.night;
   const wx  = ARCADE_WX[STATE.wx]  || ARCADE_WX.clear;
-  // WIREFRAME mode: pure black void regardless of TOD; fog fades distant
-  // lines into black for that classic arcade trench look.
-  scene.background = new THREE.Color(0x000000);
-  scene.fog = new THREE.FogExp2(0x000000, 0.0050 * wx.fogMul);
-  // hide the painterly sky / sun (their textures would break the arcade look)
+  // TRON mode: pure black sky, fog fades distant geometry into the void.
+  // We keep real lighting on so flat-shaded faces actually shade — this
+  // is what gives the scene its 3D feel.
+  scene.background = new THREE.Color(0x000308);
+  scene.fog = new THREE.FogExp2(0x000308, 0.0040 * wx.fogMul);
   if(sky){ sky.visible = false; }
   if(sunSprite){ sunSprite.visible = false; }
-  if(hemi){ hemi.intensity = 0; }
-  if(dirL){ dirL.intensity = 0; }
-  if(ambL){ ambL.intensity = 1.0; }
+  // Tron lighting: cool cyan key from above-right, warm orange fill from
+  // below-left, with a touch of dim ambient.
+  if(hemi){ hemi.intensity = 0.55; hemi.color.setHex(0x00ddff); hemi.groundColor.setHex(0xff7722); }
+  if(dirL){
+    dirL.intensity = 1.10; dirL.color.setHex(0x99eeff);
+    dirL.position.set(220, 380, 120).normalize().multiplyScalar(600);
+  }
+  if(ambL){ ambL.intensity = 0.18; ambL.color.setHex(0x223366); }
   // stars tinted by TOD, opacity dimmed by weather
   if(stars){ scene.remove(stars); stars.geometry.dispose(); stars.material.dispose(); stars=null; }
   {
@@ -2239,18 +2265,25 @@ function applyArcadeLook(){
     const emissive = m.emissive && ((m.emissiveIntensity||0) > 0.5);
     let nm;
     if(emissive){
-      // pickups + missiles stay as solid bright blobs (not wireframed)
+      // pickups + missiles stay as solid bright unlit blobs
       const col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15);
       col.multiplyScalar(wx.brightness);
       nm = new THREE.MeshBasicMaterial({color:col});
-    } else if(obj===roadObj){
-      nm = new THREE.MeshBasicMaterial({ color:dim(ROAD_COLOR), wireframe:true });
-    } else if(rootHex!=null){
-      nm = new THREE.MeshBasicMaterial({ color:dim(rootHex), wireframe:true });
-    } else if(m.color){
-      nm = new THREE.MeshBasicMaterial({ color:m.color.clone().multiplyScalar(wx.brightness), wireframe:true });
     } else {
-      nm = new THREE.MeshBasicMaterial({ color:dim(0xffffff), wireframe:true });
+      // Solid shaded material so faces light/shadow give 3D form. Each
+      // kind also gets an emissive tint at ~30% so dark obstacles don't
+      // disappear into the night yet still read as solid silhouettes.
+      let baseHex;
+      if(obj===roadObj)        baseHex = ROAD_COLOR;
+      else if(rootHex!=null)   baseHex = rootHex;
+      else if(m.color)         baseHex = m.color.getHex();
+      else                     baseHex = 0x223344;
+      const col = new THREE.Color(baseHex).multiplyScalar(wx.brightness);
+      const emCol = col.clone().multiplyScalar(0.32);
+      nm = new THREE.MeshStandardMaterial({
+        color: col, emissive: emCol, emissiveIntensity: 1.0,
+        flatShading: true, roughness: 0.85, metalness: 0.05,
+      });
     }
     obj.userData.retroDone = true;
     obj.material = nm;
@@ -2665,19 +2698,15 @@ function drawCockpitAndHUD(){
   // (on-screen stick is a real DOM element now; no canvas hint needed)
   drawScanlines(w, h);
 }
-// CRT scanlines + edge vignette + faint phosphor tint — proper arcade
-// monitor feel for the wireframe scene.
+// Subtle CRT scanlines + soft vignette. Quiet enough that the 3D
+// shading on the geometry still reads cleanly.
 function drawScanlines(w,h){
   hudCtx.save();
-  // dark scanlines every 3 px
-  hudCtx.fillStyle='rgba(0,0,0,0.40)';
-  for(let y=0;y<h;y+=3){
-    hudCtx.fillRect(0,y,w,1);
-  }
-  // strong edge vignette
-  const vg = hudCtx.createRadialGradient(w*0.5, h*0.5, Math.min(w,h)*0.30, w*0.5, h*0.5, Math.max(w,h)*0.78);
+  hudCtx.fillStyle='rgba(0,0,0,0.18)';
+  for(let y=0;y<h;y+=3){ hudCtx.fillRect(0,y,w,1); }
+  const vg = hudCtx.createRadialGradient(w*0.5, h*0.5, Math.min(w,h)*0.40, w*0.5, h*0.5, Math.max(w,h)*0.85);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.70)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.45)');
   hudCtx.fillStyle = vg;
   hudCtx.fillRect(0,0,w,h);
   hudCtx.restore();
@@ -3028,6 +3057,7 @@ function loop(){
   if(STATE.started && !STATE.over){
     step(dt);
     tickStorm(dt);
+    if(monolith){ monolith.rotation.y += dt*0.04; monolith.rotation.x += dt*0.012; }
   }
   // particles (explosion debris/smoke) keep animating even after crash
   if(STATE.started){ tickParticles(dt); tickMissiles(dt); tickBullets(dt); tickEnemies(dt); }
