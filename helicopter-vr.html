@@ -2409,7 +2409,7 @@ function step(dt){
 
   // Relaxed cruise — still fast, but giving the player time to react.
   // Boost becomes the "feel the rush" moment instead of the default pace.
-  const diffSpd = STATE.diff==='recon' ? 38 : STATE.diff==='hot' ? 62 : 50;
+  const diffSpd = STATE.diff==='recon' ? 50 : STATE.diff==='hot' ? 82 : 66;
   // Faster cruise per cleared level (capped so it stays controllable).
   const lvlMul = Math.min(1.6, 1 + (STATE.level-1)*0.10);
   const cruise  = diffSpd * boostF * lvlMul;
