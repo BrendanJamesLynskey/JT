@@ -637,21 +637,23 @@ function buildTerrain(){
   // carry the natural grass/dirt/rock/snow palette; MeshBasicMaterial
   // gives flat unshaded fills — exactly the cartoon look we want.
   const indices=[];
-  // SOLID triangulated terrain — faces flat-shaded by lighting so the
-  // valley reads as 3D rather than a flat colour wash.
-  for(let i=0;i<SLICES-1;i++){
+  // PURE WIREFRAME terrain: rungs (cross-section) + rails (along-road).
+  // White lines, no triangle diagonals, no fills — Battlezone grid.
+  for(let i=0;i<SLICES;i++){
     for(let j=0;j<NC-1;j++){
-      const a=i*NC+j, b=i*NC+(j+1), c=(i+1)*NC+j, d=(i+1)*NC+(j+1);
-      indices.push(a,c,b, b,c,d);
+      indices.push(i*NC+j, i*NC+(j+1));
+    }
+  }
+  for(let i=0;i<SLICES-1;i++){
+    for(let j=0;j<NC;j++){
+      indices.push(i*NC+j, (i+1)*NC+j);
     }
   }
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
-  geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
   geo.setIndex(indices);
-  geo.computeVertexNormals();
-  const mat=new THREE.MeshStandardMaterial({vertexColors:true, flatShading:true, roughness:1.0, metalness:0.0});
-  return new THREE.Mesh(geo, mat);
+  const mat=new THREE.LineBasicMaterial({color:0xffffff});
+  return new THREE.LineSegments(geo, mat);
 }
 
 // ─── TREES (InstancedMesh) ────────────────────────────────
@@ -662,13 +664,11 @@ function buildMonolith(){
   // Big low-poly shape sitting far behind the trench, slowly rotating
   // for atmospheric depth. Pure black with a faint cyan emissive so it
   // reads as a silhouette against the night sky.
+  // Wireframe icosahedron, white lines.
   const geo = new THREE.IcosahedronGeometry(180, 1);
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0x000000, emissive: 0x002238, emissiveIntensity: 1.2,
-    flatShading: true, roughness: 1.0
-  });
+  const mat = new THREE.MeshBasicMaterial({color:0xffffff, wireframe:true});
   monolith = new THREE.Mesh(geo, mat);
-  monolith.userData.retroDone = true; // skip arcade material conversion
+  monolith.userData.retroDone = true;
   // Place it near the start of the spline, far ahead and high up.
   if(spline){
     const sp = spline.getPointAt(0);
@@ -2258,8 +2258,9 @@ function buildWorld(){
 
   terrain = buildTerrain(); scene.add(terrain);
   roadObj = buildRoad(spline); scene.add(roadObj);
-  buildTrees();
-  buildGrass();
+  // wireframe mode: no solid decorative meshes
+  // buildTrees();
+  // buildGrass();
   buildMonolith();
   buildTronGrid(spline);
   populateObstacles(spline);
@@ -2306,7 +2307,7 @@ function buildTronGrid(spline){
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  const mat = new THREE.LineBasicMaterial({color:0x00ddff, transparent:true, opacity:0.85});
+  const mat = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.85});
   tronGrid = new THREE.LineSegments(geo, mat);
   tronGrid.userData.retroDone = true;   // skip arcade material conversion
   scene.add(tronGrid);
@@ -2376,21 +2377,15 @@ function applyArcadeLook(){
     dusk:  { bg:0x140618, sky:0xff66cc, ground:0x9933aa, key:0xffaaee, keyDir:[-180, 280, 280], keyInt:1.05, hemiInt:0.50, ambInt:0.18, ambCol:0x33163d },
     night: { bg:0x000004, sky:0x4466cc, ground:0x223344, key:0x6688ff, keyDir:[-220, 380, 120], keyInt:0.80, hemiInt:0.40, ambInt:0.12, ambCol:0x111630 },
   };
-  const tt = TRON_TOD[STATE.tod] || TRON_TOD.noon;
-  scene.background = new THREE.Color(tt.bg);
-  scene.fog = new THREE.FogExp2(tt.bg, 0.0040 * wx.fogMul);
+  // PURE WIREFRAME mode: black void, no lighting needed (LineBasicMaterial
+  // and MeshBasicMaterial don't respond to lights anyway).
+  scene.background = new THREE.Color(0x000000);
+  scene.fog = new THREE.FogExp2(0x000000, 0.0035 * wx.fogMul);
   if(sky){ sky.visible = false; }
   if(sunSprite){ sunSprite.visible = false; }
-  if(hemi){
-    hemi.intensity = tt.hemiInt * wx.brightness;
-    hemi.color.setHex(tt.sky); hemi.groundColor.setHex(tt.ground);
-  }
-  if(dirL){
-    dirL.intensity = tt.keyInt * wx.brightness;
-    dirL.color.setHex(tt.key);
-    dirL.position.set(tt.keyDir[0], tt.keyDir[1], tt.keyDir[2]).normalize().multiplyScalar(600);
-  }
-  if(ambL){ ambL.intensity = tt.ambInt * wx.brightness; ambL.color.setHex(tt.ambCol); }
+  if(hemi) hemi.intensity = 0;
+  if(dirL) dirL.intensity = 0;
+  if(ambL){ ambL.intensity = 1.0; ambL.color.setHex(0xffffff); }
   // stars tinted by TOD, opacity dimmed by weather
   if(stars){ scene.remove(stars); stars.geometry.dispose(); stars.material.dispose(); stars=null; }
   {
@@ -2443,37 +2438,14 @@ function applyArcadeLook(){
     const emissive = m.emissive && ((m.emissiveIntensity||0) > 0.5);
     let nm;
     if(emissive){
-      // pickups + missiles stay as solid bright unlit blobs
+      // pickups, missiles, prizes, bullets stay solid bright so they pop
+      // against the wireframe void.
       const col = m.emissive.clone().lerp(new THREE.Color(0xffffff), 0.15);
       col.multiplyScalar(wx.brightness);
       nm = new THREE.MeshBasicMaterial({color:col});
     } else {
-      // Tron silhouette: very dark body, a thin emissive in the kind's
-      // colour. Looks black-ish at distance but glows on facing edges.
-      let baseHex;
-      if(obj===roadObj)        baseHex = ROAD_COLOR;
-      else if(rootHex!=null)   baseHex = rootHex;
-      else if(m.color)         baseHex = m.color.getHex();
-      else                     baseHex = 0x223344;
-      const accent = new THREE.Color(baseHex);
-      const body = accent.clone().multiplyScalar(0.10);   // near-black body
-      const em   = accent.clone().multiplyScalar(0.25);   // faint emissive tint
-      nm = new THREE.MeshStandardMaterial({
-        color: body, emissive: em, emissiveIntensity: 1.0,
-        flatShading: true, roughness: 0.95, metalness: 0.05,
-      });
-      // GLOWING EDGE OUTLINE — Tron's signature look. Add an
-      // EdgesGeometry overlay child as bright LineSegments. Skip if the
-      // mesh has no geometry or is already an outline (avoid recursion).
-      if(obj.geometry && !obj.userData.tronOutlined && obj.geometry.attributes && obj.geometry.attributes.position){
-        const eg = new THREE.EdgesGeometry(obj.geometry, 18);
-        const lineMat = new THREE.LineBasicMaterial({color: accent.clone().multiplyScalar(wx.brightness*1.2)});
-        const lines = new THREE.LineSegments(eg, lineMat);
-        lines.userData.retroDone = true;
-        lines.userData.isTronOutline = true;
-        obj.add(lines);
-        obj.userData.tronOutlined = true;
-      }
+      // PURE WIREFRAME: every solid mesh becomes white wireframe.
+      nm = new THREE.MeshBasicMaterial({color:0xffffff, wireframe:true});
     }
     obj.userData.retroDone = true;
     obj.material = nm;
