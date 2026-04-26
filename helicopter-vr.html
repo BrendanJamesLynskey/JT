@@ -133,23 +133,6 @@ html,body{background:#000;overflow:hidden;font-family:'Share Tech Mono',monospac
     </div>
   </div>
 
-  <div class="row"><div class="rlabel">TIME OF DAY</div>
-    <div class="egrid g4" style="max-width:620px;">
-      <div class="ebtn" data-grp="tod" data-val="dawn"><span>&#127746;</span>Dawn</div>
-      <div class="ebtn sel" data-grp="tod" data-val="noon"><span>&#9728;&#65039;</span>Noon</div>
-      <div class="ebtn" data-grp="tod" data-val="dusk"><span>&#127751;</span>Dusk</div>
-      <div class="ebtn" data-grp="tod" data-val="night"><span>&#127769;</span>Night</div>
-    </div>
-  </div>
-
-  <div class="row"><div class="rlabel">WEATHER</div>
-    <div class="egrid g3" style="max-width:520px;">
-      <div class="ebtn sel" data-grp="wx" data-val="clear"><span>&#9728;&#65039;</span>Clear</div>
-      <div class="ebtn" data-grp="wx" data-val="haze"><span>&#127787;</span>Haze</div>
-      <div class="ebtn" data-grp="wx" data-val="storm"><span>&#9889;</span>Storm</div>
-    </div>
-  </div>
-
   <div class="row"><div class="rlabel">CONTROLS</div>
     <div class="egrid g2" style="max-width:420px;" id="ctlGrid">
       <div class="ebtn" data-grp="ctl" data-val="touch"><span>&#128241;</span>Touch<div class="autotag">AUTO</div></div>
@@ -929,21 +912,38 @@ function placeBalloon(p){
 // Pickup: a glowing green ring the pilot flies through to restore life.
 function placePickup(worldX, worldY, worldZ, tang){
   const g=new THREE.Group();
-  const torusGeo=new THREE.TorusGeometry(2.2, 0.35, 10, 28);
-  const torusMat=new THREE.MeshStandardMaterial({color:0x33ff88, emissive:0x22ff77, emissiveIntensity:1.4, roughness:0.4});
-  const ring=new THREE.Mesh(torusGeo, torusMat);
-  g.add(ring);
-  // additive halo sprite
+  // Bright red 3D heart, extruded with a small bevel.
+  const s = new THREE.Shape();
+  s.moveTo(0.5, 0.5);
+  s.bezierCurveTo(0.5, 0.5, 0.4, 0.0, 0.0, 0.0);
+  s.bezierCurveTo(-0.6, 0.0, -0.6, 0.7, -0.6, 0.7);
+  s.bezierCurveTo(-0.6, 1.1, -0.3, 1.54, 0.5, 1.85);
+  s.bezierCurveTo(1.2, 1.54, 1.6, 1.1, 1.6, 0.7);
+  s.bezierCurveTo(1.6, 0.7, 1.6, 0.0, 1.0, 0.0);
+  s.bezierCurveTo(0.7, 0.0, 0.5, 0.5, 0.5, 0.5);
+  const heartGeo = new THREE.ExtrudeGeometry(s, {
+    depth: 0.6, bevelEnabled: true, bevelSegments: 1, steps: 1,
+    bevelSize: 0.12, bevelThickness: 0.12
+  });
+  heartGeo.scale(2.0, 2.0, 2.0);
+  heartGeo.center();
+  heartGeo.rotateZ(Math.PI);              // shape is upside-down by default
+  const heartMat = new THREE.MeshStandardMaterial({
+    color:0xff2233, emissive:0xff1133, emissiveIntensity:1.4, roughness:0.4
+  });
+  const heart = new THREE.Mesh(heartGeo, heartMat);
+  g.add(heart);
+  // pink/red halo sprite
   if(!EXPL_TEX){ EXPL_TEX=makeFireballTexture(); SMOKE_TEX=makeSmokeTexture(); }
-  const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, color:0x66ffaa}));
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({map:EXPL_TEX, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, color:0xff5577}));
   halo.scale.set(6,6,6);
   g.add(halo);
   g.position.set(worldX, worldY, worldZ);
-  // orient ring so its axis lies along road tangent — you fly THROUGH it
-  g.rotation.y = Math.atan2(tang.x, tang.z);
+  // face the heart toward the road so the player sees its silhouette
+  g.rotation.y = Math.atan2(tang.x, tang.z) + Math.PI/2;
   scene.add(g);
   OBSTACLES.push({mesh:g, kind:'pickup', pos:new THREE.Vector3(worldX, worldY, worldZ), r:3.4,
-    phase:Math.random()*Math.PI*2, ring:ring, halo:halo, collected:false});
+    phase:Math.random()*Math.PI*2, ring:heart, halo:halo, collected:false});
   return g;
 }
 
