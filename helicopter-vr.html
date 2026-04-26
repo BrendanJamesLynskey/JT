@@ -977,18 +977,20 @@ function placePrize(worldX, worldY, worldZ){
 
 // Jagged rock outcrop jutting from the wall — purely a hazard, no firing.
 function placeRock(worldX, worldY, worldZ, scale){
+  // Cleaner wireframe look: 1-2 tetrahedra per rock (4 faces / 6 edges
+  // each) instead of 3-6 octahedra (8 faces / 12 edges each).
   const g=new THREE.Group();
-  const rocks = 3 + Math.floor(Math.random()*4);
+  const rocks = 1 + (Math.random()<0.4 ? 1 : 0);
   let topY=0, botY=0;
   for(let i=0;i<rocks;i++){
-    const sz = scale * (0.65 + Math.random()*0.9);
+    const sz = scale * (0.85 + Math.random()*0.6);
     const r = new THREE.Mesh(
-      new THREE.OctahedronGeometry(sz, 0),
+      new THREE.TetrahedronGeometry(sz, 0),
       new THREE.MeshBasicMaterial({color: 0x4a3a2a})
     );
-    const lx = (Math.random()-0.5)*scale*1.6;
-    const ly = (Math.random()-0.5)*scale*0.7;
-    const lz = (Math.random()-0.5)*scale*1.6;
+    const lx = (Math.random()-0.5)*scale*0.6;
+    const ly = (Math.random()-0.5)*scale*0.4;
+    const lz = (Math.random()-0.5)*scale*0.6;
     r.position.set(lx, ly, lz);
     r.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
     g.add(r);
@@ -999,7 +1001,7 @@ function placeRock(worldX, worldY, worldZ, scale){
   scene.add(g);
   OBSTACLES.push({mesh:g, kind:'rock',
     pos:new THREE.Vector3(worldX, worldY, worldZ),
-    r: scale*1.6,
+    r: scale*1.4,
     hitTop: worldY + topY + 1,
     hitBot: worldY + botY - 1});
   return g;
