@@ -1104,38 +1104,59 @@ function populateObstacles(spline){
   }
   // turrets — placed thickly along both wall rims, often on BOTH sides
   // at the same point so the player gets crossfire.
-  const turretStep = 110/densityMul;
-  for(let d=160; d<len-80; d+=turretStep + Math.random()*40){
+  const turretStep = 55/densityMul;
+  for(let d=140; d<len-80; d+=turretStep + Math.random()*25){
     const t=d/len;
     const p=spline.getPointAt(t);
     const tang=spline.getTangentAt(t).normalize();
     const bx=-tang.z, bz=tang.x;
-    const off = (82 + Math.random()*20) * widthMul(t); // just inside the plateau
-    // place on one side always; ~40% of the time on both sides for crossfire
-    const sides = Math.random()<0.4 ? [-1,+1] : [Math.random()<0.5?-1:1];
+    const off = (82 + Math.random()*22) * widthMul(t); // just inside the plateau
+    // both sides ~60% of the time for crossfire
+    const sides = Math.random()<0.6 ? [-1,+1] : [Math.random()<0.5?-1:1];
     for(const s of sides){
       const wx=p.x+bx*s*off, wz=p.z+bz*s*off;
       const wy=groundY(wx,wz);
       placeTurret(wx, wy, wz, tang, s);
     }
   }
-  // jagged rock outcrops jutting from the wall slope — stay clear or
-  // you scrape them and lose health. Dense placement: every ~32 m on
-  // average, often in clusters on both sides at once.
-  const rockStep = 22/densityMul;
-  for(let d=80; d<len-80; d+=rockStep + Math.random()*22){
+  // jagged rock outcrops jutting from the wall slope.
+  const rockStep = 14/densityMul;
+  for(let d=80; d<len-80; d+=rockStep + Math.random()*14){
     const t=d/len;
     const p=spline.getPointAt(t);
     const tang=spline.getTangentAt(t).normalize();
     const bx=-tang.z, bz=tang.x;
     const wMul=widthMul(t);
-    // either side, with a 45% chance of both sides (denser hazard)
-    const sides = Math.random()<0.45 ? [-1,+1] : [Math.random()<0.5?-1:1];
+    // ~55% chance of both sides
+    const sides = Math.random()<0.55 ? [-1,+1] : [Math.random()<0.5?-1:1];
     for(const s of sides){
-      const off = (40 + Math.random()*38) * wMul;   // 40..78 — slope band
+      const off = (38 + Math.random()*44) * wMul;   // 38..82 — full slope band
       const wx=p.x+bx*s*off, wz=p.z+bz*s*off;
       const wy=groundY(wx,wz) + 1.5;
-      placeRock(wx, wy, wz, 2.2 + Math.random()*3.2);
+      placeRock(wx, wy, wz, 2.0 + Math.random()*3.0);
+    }
+  }
+  // CLIFF outcrops: bigger, taller rock formations every ~140 m. Same
+  // placeRock primitive but at much larger scale so they read as cliffs
+  // sticking out from the wall face.
+  const cliffStep = 140/densityMul;
+  for(let d=200; d<len-80; d+=cliffStep + Math.random()*100){
+    const t=d/len;
+    const p=spline.getPointAt(t);
+    const tang=spline.getTangentAt(t).normalize();
+    const bx=-tang.z, bz=tang.x;
+    const wMul=widthMul(t);
+    const s = Math.random()<0.5 ? -1 : 1;
+    const off = (50 + Math.random()*30) * wMul;     // mid wall slope
+    const wx = p.x + bx*s*off;
+    const wz = p.z + bz*s*off;
+    const wy = groundY(wx,wz) + 3.0;                // sits proud of the slope
+    placeRock(wx, wy, wz, 6.0 + Math.random()*5.0); // 6..11 m — cliff sized
+    // Cluster of smaller rocks at the base of the cliff
+    for(let k=0;k<3;k++){
+      const ox = wx + (Math.random()-0.5)*8;
+      const oz = wz + (Math.random()-0.5)*8;
+      placeRock(ox, groundY(ox,oz)+1.0, oz, 1.8 + Math.random()*1.8);
     }
   }
   // arches
