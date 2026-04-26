@@ -2059,6 +2059,128 @@ function unlockAudio(){
     try{ AC.resume(); }catch(_){}
   }
 }
+// ─── METAL SOUNDTRACK (procedural) ─────────────────────────
+// Driving 4/4 metal loop synthesised on the fly: kick on every beat,
+// snare on 2 and 4, hi-hat 8ths, distorted sawtooth bass + power-chord
+// stabs. ~156 BPM. No audio assets needed.
+let MUSIC_ON = false;
+let musicGain = null;
+let musicTimer = null;
+let musicBar = 0;
+function startMusic(){
+  if(MUSIC_ON || !AC || !masterGain) return;
+  MUSIC_ON = true;
+  if(!musicGain){
+    musicGain = AC.createGain();
+    musicGain.gain.value = 0.55;
+    musicGain.connect(masterGain);
+  } else {
+    musicGain.gain.setTargetAtTime(0.55, AC.currentTime, 0.05);
+  }
+  musicBar = 0;
+  scheduleBar();
+}
+function stopMusic(){
+  MUSIC_ON = false;
+  if(musicTimer){ clearTimeout(musicTimer); musicTimer = null; }
+  if(musicGain){ musicGain.gain.setTargetAtTime(0, AC.currentTime, 0.08); }
+}
+function scheduleBar(){
+  if(!MUSIC_ON || !AC) return;
+  const BPM = 156;
+  const beat = 60/BPM;
+  const t0 = AC.currentTime + 0.05;
+  // kick on every beat
+  for(let i=0;i<4;i++) mKick(t0 + i*beat);
+  // snare on 2 and 4
+  mSnare(t0 + beat*1);
+  mSnare(t0 + beat*3);
+  // closed hi-hat on 8ths (skip beat 1 8th-0 to leave kick room)
+  for(let i=0;i<8;i++) mHat(t0 + i*beat*0.5);
+  // bass + power-chord riff: A power, A power, D power, F power
+  // (dropped-D-style root motion, very metal)
+  const roots = [55, 55, 73.42, 87.31];   // A1, A1, D2, F2
+  const fifths = [82.41, 82.41, 110.00, 130.81]; // E2, E2, A2, C3
+  for(let i=0;i<4;i++){
+    mBass(t0 + i*beat, roots[i], beat*0.95);
+    // power chord stab on the down-beat of each beat
+    mPowerChord(t0 + i*beat + 0.005, [roots[i]*2, fifths[i]*2], beat*0.55);
+  }
+  // schedule the next bar half a beat before this one ends
+  const ms = (beat * 4) * 1000;
+  musicBar++;
+  musicTimer = setTimeout(scheduleBar, ms - 30);
+}
+function mKick(t){
+  const o=AC.createOscillator(); const g=AC.createGain();
+  o.type='sine';
+  o.frequency.setValueAtTime(150, t);
+  o.frequency.exponentialRampToValueAtTime(38, t+0.13);
+  g.gain.setValueAtTime(0.85, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t+0.20);
+  o.connect(g); g.connect(musicGain);
+  o.start(t); o.stop(t+0.22);
+}
+function mSnare(t){
+  const dur=0.18;
+  const buf=AC.createBuffer(1, Math.floor(AC.sampleRate*dur), AC.sampleRate);
+  const data=buf.getChannelData(0);
+  for(let i=0;i<data.length;i++) data[i]=Math.random()*2-1;
+  const n=AC.createBufferSource(); n.buffer=buf;
+  const f=AC.createBiquadFilter(); f.type='highpass'; f.frequency.value=1300;
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0.55, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+  n.connect(f); f.connect(g); g.connect(musicGain);
+  n.start(t);
+}
+function mHat(t){
+  const dur=0.04;
+  const buf=AC.createBuffer(1, Math.floor(AC.sampleRate*dur), AC.sampleRate);
+  const data=buf.getChannelData(0);
+  for(let i=0;i<data.length;i++) data[i]=Math.random()*2-1;
+  const n=AC.createBufferSource(); n.buffer=buf;
+  const f=AC.createBiquadFilter(); f.type='highpass'; f.frequency.value=7000;
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0.14, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+  n.connect(f); f.connect(g); g.connect(musicGain);
+  n.start(t);
+}
+function mBass(t, freq, dur){
+  const o=AC.createOscillator(); o.type='sawtooth';
+  o.frequency.setValueAtTime(freq, t);
+  const f=AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=850;
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0.30, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+  o.connect(f); f.connect(g); g.connect(musicGain);
+  o.start(t); o.stop(t+dur+0.01);
+}
+function mPowerChord(t, freqs, dur){
+  // Two sawtooth oscillators (root + fifth) into a clipping waveshaper
+  // for a buzzy distorted guitar feel.
+  const ws = AC.createWaveShaper();
+  const curve = new Float32Array(2049);
+  for(let i=0;i<curve.length;i++){
+    const x = (i/2048)*2 - 1;
+    curve[i] = Math.tanh(x * 4.5);
+  }
+  ws.curve = curve;
+  const f = AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=2200;
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.16, t);
+  g.gain.linearRampToValueAtTime(0.13, t+dur*0.4);
+  g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+  ws.connect(f); f.connect(g); g.connect(musicGain);
+  for(const fr of freqs){
+    const o = AC.createOscillator(); o.type='sawtooth';
+    o.frequency.setValueAtTime(fr, t);
+    o.connect(ws);
+    o.start(t); o.stop(t+dur+0.01);
+  }
+}
+
 function crashBoom(){
   if(!AC) return;
   const t=AC.currentTime;
@@ -2198,21 +2320,30 @@ const ARCADE_WX = {
 function applyArcadeLook(){
   const tod = ARCADE_TOD[STATE.tod] || ARCADE_TOD.night;
   const wx  = ARCADE_WX[STATE.wx]  || ARCADE_WX.clear;
-  // TRON mode: pure black sky, fog fades distant geometry into the void.
-  // We keep real lighting on so flat-shaded faces actually shade — this
-  // is what gives the scene its 3D feel.
-  scene.background = new THREE.Color(0x000308);
-  scene.fog = new THREE.FogExp2(0x000308, 0.0040 * wx.fogMul);
+  // TRON mode lighting recipes per time of day. Each recipe shifts the
+  // sky tint, the directional key colour, and overall brightness so
+  // dawn / noon / dusk / night look distinct in the same Tron palette.
+  const TRON_TOD = {
+    dawn:  { bg:0x1a0a06, sky:0xff8855, ground:0xff5522, key:0xffaa66, keyDir:[ 220, 280, 280], keyInt:1.05, hemiInt:0.50, ambInt:0.20, ambCol:0x331a08 },
+    noon:  { bg:0x000308, sky:0x00ddff, ground:0xff7722, key:0x99eeff, keyDir:[ 220, 380, 120], keyInt:1.20, hemiInt:0.55, ambInt:0.18, ambCol:0x223366 },
+    dusk:  { bg:0x140618, sky:0xff66cc, ground:0x9933aa, key:0xffaaee, keyDir:[-180, 280, 280], keyInt:1.05, hemiInt:0.50, ambInt:0.18, ambCol:0x33163d },
+    night: { bg:0x000004, sky:0x4466cc, ground:0x223344, key:0x6688ff, keyDir:[-220, 380, 120], keyInt:0.80, hemiInt:0.40, ambInt:0.12, ambCol:0x111630 },
+  };
+  const tt = TRON_TOD[STATE.tod] || TRON_TOD.noon;
+  scene.background = new THREE.Color(tt.bg);
+  scene.fog = new THREE.FogExp2(tt.bg, 0.0040 * wx.fogMul);
   if(sky){ sky.visible = false; }
   if(sunSprite){ sunSprite.visible = false; }
-  // Tron lighting: cool cyan key from above-right, warm orange fill from
-  // below-left, with a touch of dim ambient.
-  if(hemi){ hemi.intensity = 0.55; hemi.color.setHex(0x00ddff); hemi.groundColor.setHex(0xff7722); }
-  if(dirL){
-    dirL.intensity = 1.10; dirL.color.setHex(0x99eeff);
-    dirL.position.set(220, 380, 120).normalize().multiplyScalar(600);
+  if(hemi){
+    hemi.intensity = tt.hemiInt * wx.brightness;
+    hemi.color.setHex(tt.sky); hemi.groundColor.setHex(tt.ground);
   }
-  if(ambL){ ambL.intensity = 0.18; ambL.color.setHex(0x223366); }
+  if(dirL){
+    dirL.intensity = tt.keyInt * wx.brightness;
+    dirL.color.setHex(tt.key);
+    dirL.position.set(tt.keyDir[0], tt.keyDir[1], tt.keyDir[2]).normalize().multiplyScalar(600);
+  }
+  if(ambL){ ambL.intensity = tt.ambInt * wx.brightness; ambL.color.setHex(tt.ambCol); }
   // stars tinted by TOD, opacity dimmed by weather
   if(stars){ scene.remove(stars); stars.geometry.dispose(); stars.material.dispose(); stars=null; }
   {
@@ -2409,7 +2540,7 @@ function step(dt){
 
   // Relaxed cruise — still fast, but giving the player time to react.
   // Boost becomes the "feel the rush" moment instead of the default pace.
-  const diffSpd = STATE.diff==='recon' ? 50 : STATE.diff==='hot' ? 82 : 66;
+  const diffSpd = STATE.diff==='recon' ? 65 : STATE.diff==='hot' ? 110 : 86;
   // Faster cruise per cleared level (capped so it stays controllable).
   const lvlMul = Math.min(1.6, 1 + (STATE.level-1)*0.10);
   const cruise  = diffSpd * boostF * lvlMul;
@@ -2937,6 +3068,7 @@ function drawStickHint(cx,cy,label){
 function startGame(){
   if(!WEBGL_OK){ return; }
   unlockAudio();
+  startMusic();
   STATE.started=true; STATE.over=false;
   document.getElementById('overlay').style.display='none';
   document.getElementById('hud').style.display='block';
@@ -2995,6 +3127,7 @@ function restartGame(){
   DIST=0; MULT=1.0;
   buildWorld();
   resetHeli();
+  startMusic();
 }
 function goMenu(){
   STATE.started=false; STATE.over=false;
@@ -3007,6 +3140,7 @@ function goMenu(){
   releaseStick();
   // Silence the rotor — otherwise the hum keeps playing in the menu.
   if(rotorGain && AC){ rotorGain.gain.setTargetAtTime(0, AC.currentTime, 0.05); }
+  stopMusic();
   document.getElementById('overlay').style.display='flex';
   hudCtx.clearRect(0,0,window.innerWidth,window.innerHeight);
 }
@@ -3048,6 +3182,7 @@ function gameOver(cause){
   // Let the explosion play before the panel pops up.
   setTimeout(()=>{ if(STATE.over) document.getElementById('gameover').style.display='flex'; }, 1500);
   if(rotorGain && AC){ rotorGain.gain.setTargetAtTime(0, AC.currentTime, 0.2); }
+  stopMusic();
 }
 
 // ─── RENDER LOOP ───────────────────────────────────────────
