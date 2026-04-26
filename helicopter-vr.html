@@ -912,7 +912,9 @@ function placeBalloon(p){
 // Pickup: a glowing green ring the pilot flies through to restore life.
 function placePickup(worldX, worldY, worldZ, tang){
   const g=new THREE.Group();
-  // Bright red 3D heart, extruded with a small bevel.
+  // Bright red 3D heart, extruded with a chunky bevel.
+  // Bezier path drawn in Y-up: point at bottom, lobes at top — already
+  // the right way up, so NO rotateZ.
   const s = new THREE.Shape();
   s.moveTo(0.5, 0.5);
   s.bezierCurveTo(0.5, 0.5, 0.4, 0.0, 0.0, 0.0);
@@ -921,15 +923,16 @@ function placePickup(worldX, worldY, worldZ, tang){
   s.bezierCurveTo(1.2, 1.54, 1.6, 1.1, 1.6, 0.7);
   s.bezierCurveTo(1.6, 0.7, 1.6, 0.0, 1.0, 0.0);
   s.bezierCurveTo(0.7, 0.0, 0.5, 0.5, 0.5, 0.5);
+  // Three.js Shape is in screen-style Y-down for ExtrudeGeometry; flip
+  // about X so the point ends up at the bottom in world Y-up.
   const heartGeo = new THREE.ExtrudeGeometry(s, {
-    depth: 0.6, bevelEnabled: true, bevelSegments: 1, steps: 1,
-    bevelSize: 0.12, bevelThickness: 0.12
+    depth: 0.9, bevelEnabled: true, bevelSegments: 2, steps: 1,
+    bevelSize: 0.18, bevelThickness: 0.18
   });
-  heartGeo.scale(2.0, 2.0, 2.0);
+  heartGeo.scale(2.4, -2.4, 2.4);  // negative Y flips Y-down to Y-up
   heartGeo.center();
-  heartGeo.rotateZ(Math.PI);              // shape is upside-down by default
   const heartMat = new THREE.MeshStandardMaterial({
-    color:0xff2233, emissive:0xff1133, emissiveIntensity:1.4, roughness:0.4
+    color:0xff2233, emissive:0xff2233, emissiveIntensity:1.6, roughness:0.4
   });
   const heart = new THREE.Mesh(heartGeo, heartMat);
   g.add(heart);
