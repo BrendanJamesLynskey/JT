@@ -1583,8 +1583,8 @@ function tickAltAlarm(dt){
     const t = AC.currentTime;
     const intensity = 1 - Math.max(0,clear)/TRIG;
     beepStep = 1 - beepStep;
-    const startF = beepStep ? 1100 : 700;
-    const endF   = beepStep ? 850  : 540;
+    const startF = beepStep ? 520 : 340;
+    const endF   = beepStep ? 400 : 260;
     const dur = 0.22 - intensity*0.10;
     const peakG = 0.10 + intensity*0.18;            // moderate, not blasting
     // gritty siren: sawtooth + a bit of square mixed via two oscillators
