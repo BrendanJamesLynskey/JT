@@ -942,8 +942,10 @@ function placePickup(worldX, worldY, worldZ, tang){
   halo.scale.set(6,6,6);
   g.add(halo);
   g.position.set(worldX, worldY, worldZ);
-  // face the heart toward the road so the player sees its silhouette
-  g.rotation.y = Math.atan2(tang.x, tang.z) + Math.PI/2;
+  // Face the FLAT side of the heart along the road so the player sees
+  // its full silhouette as they approach (no extra +PI/2 — that put
+  // the heart edge-on and read as a thin sliver).
+  g.rotation.y = Math.atan2(tang.x, tang.z);
   scene.add(g);
   OBSTACLES.push({mesh:g, kind:'pickup', pos:new THREE.Vector3(worldX, worldY, worldZ), r:3.4,
     phase:Math.random()*Math.PI*2, ring:heart, halo:halo, collected:false});
@@ -2653,6 +2655,10 @@ function step(dt){
 
   // balloon drift & bob + turret firing + pickup animation/collection
   const diffCD = STATE.diff==='recon'?1.6 : STATE.diff==='hot'?0.65 : 1.0;
+  // Per-level rate scaling: at level 1 missile cooldowns are ~2.5x
+  // longer (very few missiles); each cleared level shrinks the multiplier
+  // until it floors at 0.7x by level 5.
+  const lvlCD = Math.max(0.7, 2.5 - (STATE.level-1)*0.45);
   const tNow = performance.now()*0.001;
   for(let i=OBSTACLES.length-1;i>=0;i--){
     const o=OBSTACLES[i];
@@ -2712,7 +2718,7 @@ function step(dt){
       o.cooldown -= dt;
       if(o.cooldown<=0 && d2 < 420*420){
         spawnMissile(o.barrelBase, H.pos);
-        o.cooldown = (1.0+Math.random()*1.0) * diffCD;
+        o.cooldown = (1.0+Math.random()*1.0) * diffCD * lvlCD;
       }
     } else if(o.kind==='tank' && o.active){
       const dx=H.pos.x-o.pos.x, dz=H.pos.z-o.pos.z;
@@ -2721,8 +2727,8 @@ function step(dt){
       o.cooldown -= dt;
       if(o.cooldown<=0 && d2 < 500*500){
         spawnShell(o.barrelBase, H.pos);
-        // tanks fire fast bursts of 2-3 shells
-        o.cooldown = (0.7 + Math.random()*0.6) * diffCD;
+        // tanks fire fast bursts; rate also throttled by level
+        o.cooldown = (0.7 + Math.random()*0.6) * diffCD * lvlCD;
       }
     }
   }
