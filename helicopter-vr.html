@@ -2066,6 +2066,20 @@ function unlockAudio(){
     try{ AC.resume(); }catch(_){}
   }
 }
+// iOS / mobile audio policy belt-and-braces: first ANY pointer or touch
+// or key event anywhere on the page triggers unlockAudio(). Some mobile
+// browsers won't honour resume() unless it runs inside a real user
+// gesture — and the START FLIGHT click is sometimes too synthetic.
+function _firstGestureUnlock(){
+  unlockAudio();
+  document.removeEventListener('pointerdown', _firstGestureUnlock, true);
+  document.removeEventListener('touchstart',  _firstGestureUnlock, true);
+  document.removeEventListener('keydown',     _firstGestureUnlock, true);
+}
+document.addEventListener('pointerdown', _firstGestureUnlock, true);
+document.addEventListener('touchstart',  _firstGestureUnlock, true);
+document.addEventListener('keydown',     _firstGestureUnlock, true);
+
 // ─── METAL SOUNDTRACK (procedural) ─────────────────────────
 // Driving 4/4 metal loop synthesised on the fly: kick on every beat,
 // snare on 2 and 4, hi-hat 8ths, distorted sawtooth bass + power-chord
@@ -2740,7 +2754,7 @@ function step(dt){
 
   // audio rotor sound — driven by speed + boost
   if(rotorGain && AC){
-    const target = 0.08 + Math.min(0.18, spdNow*0.003) + H.boost*0.12;
+    const target = 0.025 + Math.min(0.06, spdNow*0.001) + H.boost*0.04;
     rotorGain.gain.setTargetAtTime(target, AC.currentTime, 0.08);
     const targetF = 100 + Math.min(80, spdNow*1.1) + H.boost*50;
     rotorOsc.frequency.setTargetAtTime(targetF, AC.currentTime, 0.1);
