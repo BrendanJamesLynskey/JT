@@ -2025,17 +2025,43 @@ function tickParticles(dt){
 // capture keeps the 'down' state active even if the cursor leaves the
 // button while held, so desktop click-and-drag doesn't cancel fire/boost.
 function wireHoldButton(el, onChange){
-  el.addEventListener('pointerdown', e=>{
+  // Track which pointer is currently holding the button. iOS Safari
+  // occasionally swallows pointerup on the captured element when the
+  // text changes mid-press (FIRE button countdown), so we also listen
+  // on document for the release event as a safety net.
+  let pid = -1;
+  const press = (e)=>{
+    if(pid !== -1) return;             // already held by another pointer
     e.stopPropagation(); e.preventDefault();
-    try{ el.setPointerCapture(e.pointerId); }catch(_){}
-    onChange(true); el.classList.add('active');
+    pid = e.pointerId;
+    try{ el.setPointerCapture(pid); }catch(_){}
+    onChange(true);
+    el.classList.add('active');
+  };
+  const release = (e)=>{
+    // Treat any release as our release if the id matches OR if the
+    // event came from this element (some browsers don't include id).
+    if(pid === -1) return;
+    if(e && e.pointerId !== undefined && e.pointerId !== pid) return;
+    try{ el.releasePointerCapture(pid); }catch(_){}
+    pid = -1;
+    onChange(false);
+    el.classList.remove('active');
+  };
+  el.addEventListener('pointerdown', press, {passive:false});
+  // Element-level releases (normal happy path)
+  el.addEventListener('pointerup',     release);
+  el.addEventListener('pointercancel', release);
+  el.addEventListener('pointerleave',  e=>{
+    // Only release on leave if pointer is no longer pressed (iOS edge case).
+    if(e.buttons===0 || e.pressure===0) release(e);
   });
-  ['pointerup','pointercancel'].forEach(ev=>{
-    el.addEventListener(ev, e=>{
-      try{ el.releasePointerCapture(e.pointerId); }catch(_){}
-      onChange(false); el.classList.remove('active');
-    });
-  });
+  // Document-level releases as a safety net so the button can't get
+  // stuck 'pressed' if a pointerup is lost.
+  document.addEventListener('pointerup',     release);
+  document.addEventListener('pointercancel', release);
+  // Also accept blur of the window as a release (tab switch etc).
+  window.addEventListener('blur', ()=>release({pointerId:pid}));
 }
 const boostEl=document.getElementById('boostBtn');
 wireHoldButton(boostEl, v=>{ TOUCH.boost=v; });
