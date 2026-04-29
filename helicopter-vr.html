@@ -1815,17 +1815,18 @@ function spawnBullet(){
 function tickBullets(dt){
   GUN_COOLDOWN -= dt;
   const wantFire = (TOUCH.fire || KEYS['KeyF'] || KEYS['KeyJ']) && H.alive && !STATE.over;
-  // Heat / overheat lockout — 10 s continuous fire forces 3 s cooldown.
+  const fireBtn = document.getElementById('fireBtn');
   if(GUN_LOCKOUT > 0){
     GUN_LOCKOUT -= dt;
     GUN_HEAT = Math.max(0, GUN_HEAT - dt/HEAT_COOL_TIME);
-    document.getElementById('fireBtn').classList.add('cooling');
+    fireBtn.classList.add('cooling');
+    // Countdown legend: ceil to whole seconds for a clean tick.
+    fireBtn.textContent = Math.max(1, Math.ceil(GUN_LOCKOUT));
   } else if(wantFire){
     GUN_HEAT += dt / HEAT_BURN_TIME;
     if(GUN_HEAT >= 1){
       GUN_HEAT = 1;
       GUN_LOCKOUT = HEAT_COOL_TIME;
-      // overheat klaxon
       if(AC && masterGain){
         const t=AC.currentTime;
         const o=AC.createOscillator(); const g=AC.createGain();
@@ -1838,7 +1839,10 @@ function tickBullets(dt){
     }
   } else {
     GUN_HEAT = Math.max(0, GUN_HEAT - dt/HEAT_COOL_TIME);
-    document.getElementById('fireBtn').classList.remove('cooling');
+    if(fireBtn.classList.contains('cooling')){
+      fireBtn.classList.remove('cooling');
+      fireBtn.textContent = 'FIRE';
+    }
   }
   // Actual fire: only if not in forced cooldown.
   const firing = wantFire && GUN_LOCKOUT<=0;
